@@ -213,22 +213,38 @@ class GhostAssistant:
                     self.status_lbl.config(text='F9: mic  │  Alt+T: read text')
                 elif kind == 'grab_clipboard':
                     import keyboard
-                    keyboard.send('ctrl+c')
+                    import pyperclip
+                    import time
+                    
+                    pyperclip.copy('')
+                    self.status_lbl.config(text='⌛ Wait...')
+                    
+                    # Tiny delay to ensure user has released the Alt+T keys
+                    time.sleep(0.2)
+                    
+                    # Force release of modifiers just in case
+                    keyboard.release('alt')
+                    keyboard.release('t')
+                    
+                    # Send Copy
+                    keyboard.press_and_release('ctrl+c')
+                    
                     self.status_lbl.config(text='📋 Reading text...')
-                    self.root.after(150, self._read_clipboard_and_send)
+                    self.root.after(600, self._read_clipboard_and_send)
         except queue.Empty:
             pass
         self.root.after(80, self.process_queue)
 
     def _read_clipboard_and_send(self):
+        import pyperclip
         try:
-            text = self.root.clipboard_get()
+            text = pyperclip.paste()
             if text and len(text.strip()) > 1:
                 self.on_question(text.strip())
             else:
-                self.status_lbl.config(text='❌ No text selected')
+                self.status_lbl.config(text='❌ No text found - try again')
         except Exception:
-            self.status_lbl.config(text='❌ Clipboard error')
+            self.status_lbl.config(text='❌ Selection error')
 
     def _show_question(self, text):
         short = text[:90] + '…' if len(text) > 90 else text

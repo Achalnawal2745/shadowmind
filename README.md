@@ -7,9 +7,9 @@
 ## ✨ Key Features
 
 - 👻 **Screen-Share Invisible:** Uses native Windows APIs to hide the app window from Zoom, Google Meet, Microsoft Teams, OBS, and screenshots.
-- 🎙️ **Voice Capture (F9):** Push-to-talk recording. Hold F9 while the interviewer speaks, and the AI will transcribe and answer.
+- 🎙️ **Voice Capture (F9):** Push-to-talk recording. Supports **English, Hindi, and Hinglish**. Hold F9 while the interviewer speaks, and the AI will transcribe and answer.
 - 📋 **Instant Text Capture (Alt+T):** Highlight a coding question on your screen and press `Alt+T`. The app instantly reads it and provides a solution.
-- 🤖 **Gemini 2.5 Flash:** Powered by Google's latest high-speed AI for near-instant responses.
+- 🤖 **Gemini 2.0 Flash Lite:** Powered by Google's latest hyper-fast "Lite" AI for near-instant responses on the free tier.
 - ⌨️ **Stealth Hotkeys:** 
     - `Alt+A`: Hide/Show the assistant window instantly.
     - `Alt+T`: Read highlighted text on screen.

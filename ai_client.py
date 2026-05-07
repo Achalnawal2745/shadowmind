@@ -22,7 +22,7 @@ class GeminiClient:
             system_instruction=SYSTEM_PROMPT,
         )
         response = self.client.models.generate_content_stream(
-            model='gemini-2.5-flash',
+            model='gemini-2.0-flash-lite',
             contents=question,
             config=config
         )
