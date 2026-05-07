@@ -1,0 +1,4 @@
+speechrecognition
+pyaudio
+google-generativeai
+keyboard
