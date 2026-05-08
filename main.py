@@ -69,7 +69,7 @@ class GhostAssistant:
         tk.Label(hdr, text='👻  ShadowMind', bg='#1a1a2e',
                  fg='#a78bfa', font=('Segoe UI', 10, 'bold')).pack(side='left', padx=10, pady=6)
 
-        self.status_lbl = tk.Label(hdr, text='Hold F9 to capture',
+        self.status_lbl = tk.Label(hdr, text='ShadowMind Active │ Alt+X: Panic',
                                    bg='#1a1a2e', fg='#6b7280', font=('Segoe UI', 8))
         self.status_lbl.pack(side='right', padx=10)
 
@@ -91,8 +91,8 @@ class GhostAssistant:
         ft = tk.Frame(self.main_container, bg='#0a0a14', height=22)
         ft.pack(side='bottom', fill='x')
         ft.pack_propagate(False)
-        tk.Label(ft, text='F9: mic  │  Alt+T: text  │  Alt+S: screen  │  Alt+A: hide',
-                 bg='#0a0a14', fg='#374151', font=('Segoe UI', 7)).pack(pady=3)
+        tk.Label(ft, text='F9: mic │ Alt+T: text │ Alt+S: screen │ Alt+X: PANIC │ Ctrl+Arrows: Move │ Alt+↑↓: Scroll',
+                 bg='#0a0a14', fg='#4b5563', font=('Segoe UI', 7)).pack(pady=3)
 
         # ── Manual Text Input ──
         inf = tk.Frame(self.main_container, bg='#0d0d1a')
@@ -281,7 +281,7 @@ class GhostAssistant:
                 elif kind == 'status':
                     self.status_lbl.config(text=data)
                 elif kind == 'done':
-                    self.status_lbl.config(text='F9: mic │ Alt+T: text │ Alt+S: screen')
+                    self.status_lbl.config(text='F9/Alt+T/Alt+S active │ Alt+X: Panic')
                     self._save_history()
                     full_text = ''.join(self._answer_buffer)
                     if full_text.strip():
