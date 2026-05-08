@@ -16,14 +16,6 @@ class GeminiClient:
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
 
-    def get_available_models(self):
-        """Returns a list of model names available to this key."""
-        try:
-            models = self.client.models.list()
-            return [m.name for m in models]
-        except Exception as e:
-            return [f"Error listing models: {e}"]
-
     def stream(self, question: str):
         """Yields text chunks as Gemini generates the answer."""
         config = types.GenerateContentConfig(

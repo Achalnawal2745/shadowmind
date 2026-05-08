@@ -163,12 +163,6 @@ class GhostAssistant:
             self.ask_api_key()
 
         self.gemini = GeminiClient(self.config.get('api_key', ''))
-        
-        # Log available models for debugging
-        print("\n--- Available Gemini Models ---")
-        for m in self.gemini.get_available_models():
-            print(f" - {m}")
-        print("-------------------------------\n")
 
         self.listener = VoiceListener(
             on_question=self.on_question,
