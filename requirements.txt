@@ -3,3 +3,5 @@ pyaudio
 google-genai
 keyboard
 pyperclip
+mss
+Pillow
