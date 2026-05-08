@@ -16,14 +16,19 @@ class GeminiClient:
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
 
-    def stream(self, question: str):
-        """Yields text chunks as Gemini generates the answer."""
+    def stream(self, question: str, image_bytes: bytes = None):
+        """Yields text chunks as Gemini generates the answer (supports text or image)."""
         config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
         )
+        
+        contents = [question]
+        if image_bytes:
+            contents.append(types.Part.from_bytes(data=image_bytes, mime_type='image/png'))
+
         response = self.client.models.generate_content_stream(
-            model='gemini-2.0-flash-lite',
-            contents=question,
+            model='gemini-2.5-flash',
+            contents=contents,
             config=config
         )
         for chunk in response:
