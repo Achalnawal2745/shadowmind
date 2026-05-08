@@ -1,61 +1,48 @@
-# 👻 ShadowMind — Stealth AI Interview Assistant
+# ShadowMind: AI-Powered Stealth Assistant 🕵️‍♂️🛡️
 
-**ShadowMind** is a discreet, desktop-based AI assistant designed to help during interviews and coding challenges. It listens to audio, reads selected text, and provides real-time answers from Gemini AI in a floating window that is **completely invisible to screen-sharing software**.
+ShadowMind is a high-performance, invisible AI assistant designed for support during technical interviews. It leverages Gemini 2.5 Flash to provide real-time code solutions, explanations, and multimodal analysis while remaining completely hidden from proctoring software and screen-capture tools.
 
----
+## 🚀 Key Features
 
-## ✨ Key Features
+*   **👻 Hardware Stealth**: Uses OS-level `SetWindowDisplayAffinity` to make the assistant window **completely invisible** to screenshots, screen sharing (Zoom/Teams), and recording software.
+*   **⌨️ Hotkey-First Design**: Move, scroll, and capture text without ever clicking the app. Chrome/Exam window **never loses focus**.
+*   **🧠 Conversation Memory**: Remembers previous questions and answers in the same session. Ask follow-up questions like *"elaborate on that"* or *"fix the bug in that code"*.
+*   **📸 Multimodal Capture**: Capture any part of your screen (`Alt+S`) or highlight text (`Alt+T`) and get instant analysis.
+*   **🎨 Rich UI Output**: Renders beautiful code blocks (Green/Consolas), bold text, and bullet points for easy scanning.
+*   **📜 Auto-History**: Saves every exchange into a local `history.md` file for post-interview review.
+*   **🚨 Panic Button**: A dedicated hotkey to instantly kill the process and wipe sensitive files.
 
-- 👻 **Screen-Share Invisible:** Uses native Windows APIs to hide the app window from Zoom, Google Meet, Microsoft Teams, OBS, and screenshots.
-- 🎙️ **Voice Capture (F9):** Push-to-talk recording. Supports **English, Hindi, and Hinglish**. Hold F9 while the interviewer speaks, and the AI will transcribe and answer.
-- 📋 **Instant Text Capture (Alt+T):** Highlight a coding question on your screen and press `Alt+T`. The app instantly reads it and provides a solution.
-- 🤖 **Gemini 2.0 Flash Lite:** Powered by Google's latest hyper-fast "Lite" AI for near-instant responses on the free tier.
-- ⌨️ **Stealth Hotkeys:** 
-    - `Alt+A`: Hide/Show the assistant window instantly.
-    - `Alt+T`: Read highlighted text on screen.
-    - `F9`: Hold to record audio from your microphone.
-    - `Ctrl+Q`: Safety exit (kills all background processes).
+## ⌨️ Global Hotkeys
 
----
+| Hotkey | Action |
+|--------|--------|
+| **`Alt + A`** | Toggle Visibility (Show/Hide App) |
+| **`Alt + T`** | **Capture Selected Text** (Auto-copies and sends to AI) |
+| **`Alt + S`** | **Capture Screen** (Sends screenshot + instruction to AI) |
+| **`F9`** | **Voice Input** (Push-to-talk mic input) |
+| **`Ctrl + Arrows`** | **Move Window** (Moves app without clicking/focus loss) |
+| **`Alt + Arrows`** | **Scroll Answer** (Scrolls output without clicking) |
+| **`Alt + X`** | **PANIC BUTTON** (Instantly kills app & deletes evidence) |
+| **`Ctrl + Q`** | Safe Exit |
 
-## 🚀 Getting Started
+## 🛠️ Setup
 
-### 1. Prerequisites
-- **Windows 10/11** (Required for screen-hiding feature)
-- **Python 3.8+**
-- **Gemini API Key:** Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey)
+1.  **Install Requirements**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  **Get API Key**:
+    Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/).
+3.  **Run**:
+    ```bash
+    python main.py
+    ```
 
-### 2. Installation
+## 🛡️ Stealth Best Practices
 
-1. Clone this repository or download the files.
-2. Open a terminal in the project folder and install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   *Note: If `pyaudio` fails to install, try `pip install pipwin` followed by `pipwin install pyaudio`.*
-
-### 3. Running ShadowMind
-
-Simply double-click `run.bat` or run the script manually:
-```bash
-python main.py
-```
-On first launch, you will be prompted to enter your Gemini API Key. It will be saved locally in `config.json`.
-
----
-
-## 🎮 How to Use (Stealth Mode)
-
-1. **Start the app** before your interview.
-2. Press **`Alt+A`** to hide the window. It is now running silently in the background.
-3. When a question is asked:
-    - **Verbal:** Hold **`F9`** while they speak, then release.
-    - **Written/Code:** Highlight the text with your mouse and press **`Alt+T`**.
-4. Wait 2 seconds, then press **`Alt+A`** to reveal the answer.
-5. Use the **📋 Copy** button in the UI to copy the AI's code/answer to your clipboard.
-6. Press **`Alt+A`** again to vanish.
+*   **Positioning**: Move the app directly below your webcam using `Ctrl + Arrows`. This ensures your eye movement looks natural while reading answers.
+*   **Text over Images**: Use `Alt + T` whenever possible. It's faster and uses less API quota than screenshots.
+*   **Whisper**: If using `F9`, speak very softly or whisper to avoid detection by proctoring mic-monitoring.
 
 ---
-
-## 🛡️ Disclaimer
-This tool is intended for educational purposes and personal productivity. Please use ShadowMind ethically and in accordance with the rules and policies of your interviewers or institutions.
+*Disclaimer: This tool is intended for educational and preparation purposes only. Use responsibly.*

@@ -20,6 +20,8 @@ class GhostAssistant:
         self.config = load_config()
         self.message_queue = queue.Queue()
         self.current_stream_id = 0  # Used to cancel old requests
+        self._current_question = ""   # Tracks active question for history
+        self._answer_buffer = []       # Buffers chunks for history saving
         self.setup_ui()
         self.hide_from_capture()
         self.setup_assistant()
@@ -114,8 +116,18 @@ class GhostAssistant:
         self.answer.pack(fill='both', expand=True)
         self.answer.bind("<Control-c>", self._copy_text)
 
-        # colour tags
-        self.answer.tag_config('normal', foreground='#e2e8f0')
+        # ── Text formatting tags ──
+        self.answer.tag_config('normal',      foreground='#e2e8f0', font=('Segoe UI', 10))
+        self.answer.tag_config('bold',        foreground='#ffffff', font=('Segoe UI', 10, 'bold'))
+        self.answer.tag_config('header',      foreground='#a78bfa', font=('Segoe UI', 12, 'bold'))
+        self.answer.tag_config('bullet',      foreground='#7dd3fc', font=('Segoe UI', 10))
+        self.answer.tag_config('inline_code', foreground='#fbbf24', font=('Consolas', 9),
+                               background='#1e293b')
+        self.answer.tag_config('code_block',  foreground='#86efac', font=('Consolas', 9),
+                               background='#0f172a', lmargin1=12, lmargin2=12,
+                               spacing1=4, spacing3=4)
+        self.answer.tag_config('code_lang',   foreground='#475569', font=('Consolas', 8),
+                               background='#0f172a')
 
     def _copy_text(self, event=None):
         try:
@@ -207,6 +219,10 @@ class GhostAssistant:
             # Safe Scrolling Hotkeys (No clicking required!)
             keyboard.add_hotkey('alt+up', lambda: self.scroll_answer(-3))
             keyboard.add_hotkey('alt+down', lambda: self.scroll_answer(3))
+            
+            # THE PANIC BUTTON: Instantly kill and clean up
+            keyboard.add_hotkey('alt+x', self.panic_exit)
+
         except Exception as e:
             print(f"[WARN] Hotkeys unavailable: {e}")
 
@@ -242,7 +258,6 @@ class GhostAssistant:
                 self.manual_entry.delete(0, 'end')
         except Exception:
             pass
-            
         self.message_queue.put(('question', text))
 
     def on_status(self, text):
@@ -258,40 +273,39 @@ class GhostAssistant:
                     self._show_question(data)
                     self._start_streaming(data)
                 elif kind == 'chunk':
+                    # Render ONE chunk, then yield back so the screen can repaint (typewriter effect)
                     self._append_chunk(data)
+                    self.root.update_idletasks()
+                    self.root.after(25, self.process_queue)
+                    return
                 elif kind == 'status':
                     self.status_lbl.config(text=data)
                 elif kind == 'done':
                     self.status_lbl.config(text='F9: mic │ Alt+T: text │ Alt+S: screen')
+                    self._save_history()
+                    full_text = ''.join(self._answer_buffer)
+                    if full_text.strip():
+                        self._render_markdown(full_text)
                 elif kind == 'grab_screenshot':
                     self.on_status('📸 Capturing screen...')
                     self._take_screenshot_and_send()
                 elif kind == 'grab_clipboard':
-                    # Prevent spamming - 2 second cooldown
                     now = time.time()
                     if hasattr(self, '_last_req_time') and now - self._last_req_time < 2:
                         self.status_lbl.config(text='⏳ Please wait a moment...')
                         continue
                     self._last_req_time = now
-                    
                     pyperclip.copy('')
                     self.status_lbl.config(text='⌛ Wait...')
-                    
-                    # Tiny delay to ensure user has released the Alt+T keys
                     time.sleep(0.2)
-                    
-                    # Force release of modifiers just in case
                     keyboard.release('alt')
                     keyboard.release('t')
-                    
-                    # Send Copy
                     keyboard.press_and_release('ctrl+c')
-                    
                     self.status_lbl.config(text='📋 Reading text...')
                     self.root.after(600, self._read_clipboard_and_send)
         except queue.Empty:
             pass
-        self.root.after(80, self.process_queue)
+        self.root.after(30, self.process_queue)
 
     def _read_clipboard_and_send(self):
         import pyperclip
@@ -304,21 +318,121 @@ class GhostAssistant:
         except Exception:
             self.status_lbl.config(text='❌ Selection error')
 
+    def panic_exit(self):
+        """Instantly close and delete sensitive evidence."""
+        try:
+            import pyperclip
+            pyperclip.copy('') # Clear clipboard
+            # Delete files
+            for f in ['history.md', 'last_screenshot_seen_by_ai.png']:
+                if os.path.exists(f):
+                    os.remove(f)
+        except:
+            pass
+        os._exit(0) # Force kill immediately
+
+    def _save_history(self):
+        try:
+            question = self._current_question
+            answer = ''.join(self._answer_buffer).strip()
+            if not answer or not question:
+                return
+            import datetime
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            history_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'history.md')
+            with open(history_path, 'a', encoding='utf-8') as f:
+                f.write(f"\n---\n**[{ts}]**\n\n**Q:** {question}\n\n**A:** {answer}\n")
+        except Exception as e:
+            print(f"[History] Save error: {e}")
+
     def _show_question(self, text):
+        self._current_question = text  # Save for history
+        self._answer_buffer = []       # Reset answer buffer
         short = (text[:120] + '...') if len(text) > 120 else text
         self.q_lbl.config(text=short)
         self.answer.config(state='normal')
         self.answer.delete('1.0', 'end')
         self.answer.config(state='disabled')
         self.status_lbl.config(text='⚡ Thinking…')
+        self.answer.see('1.0')  # Anchor to top
         self._force_geometry()
 
     def _append_chunk(self, chunk):
+        self._answer_buffer.append(chunk)  # Buffer for history
+        # Show raw text while streaming for live feel
         self.answer.config(state='normal')
         self.answer.insert('end', chunk, 'normal')
-        self.answer.see('end')
+        # self.answer.see('end')  # REMOVED: Don't force scroll to bottom
         self.answer.config(state='disabled')
         self._force_geometry()
+
+    def _render_markdown(self, text):
+        """Re-render the full answer with rich markdown formatting."""
+        import re
+        self.answer.config(state='normal')
+        self.answer.delete('1.0', 'end')
+
+        in_code_block = False
+        code_lines = []
+        code_lang = ''
+
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            # ── Fenced code block start/end ──
+            if line.strip().startswith('```'):
+                if not in_code_block:
+                    in_code_block = True
+                    code_lang = line.strip()[3:].strip()
+                    if code_lang:
+                        self.answer.insert('end', f' {code_lang}\n', 'code_lang')
+                else:
+                    in_code_block = False
+                    full_code = '\n'.join(code_lines) + '\n'
+                    self.answer.insert('end', full_code, 'code_block')
+                    code_lines = []
+                    code_lang = ''
+                continue
+
+            if in_code_block:
+                code_lines.append(line)
+                continue
+
+            # ── Header ──
+            if re.match(r'^#{1,3}\s+', line):
+                clean = re.sub(r'^#{1,3}\s+', '', line)
+                self._insert_inline(clean + '\n', default_tag='header')
+                continue
+
+            # ── Bullet point ──
+            if re.match(r'^[-*•]\s+', line):
+                self.answer.insert('end', '  • ', 'bullet')
+                rest = re.sub(r'^[-*•]\s+', '', line)
+                self._insert_inline(rest + '\n')
+                continue
+
+            # ── Normal line with inline formatting ──
+            self._insert_inline(line + '\n')
+
+        # Flush unclosed code block
+        if code_lines:
+            self.answer.insert('end', '\n'.join(code_lines) + '\n', 'code_block')
+
+        self.answer.see('1.0')  # Ensure we stay at the top after re-rendering
+        self.answer.config(state='disabled')
+
+    def _insert_inline(self, text, default_tag='normal'):
+        """Insert a line of text, applying bold and inline code tags."""
+        import re
+        # Pattern: **bold** or `inline code`
+        pattern = re.compile(r'(\*\*.+?\*\*|`.+?`)')
+        parts = pattern.split(text)
+        for part in parts:
+            if part.startswith('**') and part.endswith('**'):
+                self.answer.insert('end', part[2:-2], 'bold')
+            elif part.startswith('`') and part.endswith('`'):
+                self.answer.insert('end', part[1:-1], 'inline_code')
+            else:
+                self.answer.insert('end', part, default_tag)
         
     def _force_geometry(self):
         sw = self.root.winfo_screenwidth()
