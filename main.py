@@ -3,6 +3,10 @@ from tkinter import simpledialog
 import ctypes
 import threading
 import queue
+import time
+import os
+import keyboard
+import pyperclip
 
 from listener import VoiceListener
 from ai_client import GeminiClient
@@ -159,6 +163,13 @@ class GhostAssistant:
             self.ask_api_key()
 
         self.gemini = GeminiClient(self.config.get('api_key', ''))
+        
+        # Log available models for debugging
+        print("\n--- Available Gemini Models ---")
+        for m in self.gemini.get_available_models():
+            print(f" - {m}")
+        print("-------------------------------\n")
+
         self.listener = VoiceListener(
             on_question=self.on_question,
             on_status=self.on_status
@@ -212,9 +223,12 @@ class GhostAssistant:
                 elif kind == 'done':
                     self.status_lbl.config(text='F9: mic  │  Alt+T: read text')
                 elif kind == 'grab_clipboard':
-                    import keyboard
-                    import pyperclip
-                    import time
+                    # Prevent spamming - 2 second cooldown
+                    now = time.time()
+                    if hasattr(self, '_last_req_time') and now - self._last_req_time < 2:
+                        self.status_lbl.config(text='⏳ Please wait a moment...')
+                        continue
+                    self._last_req_time = now
                     
                     pyperclip.copy('')
                     self.status_lbl.config(text='⌛ Wait...')
@@ -262,13 +276,20 @@ class GhostAssistant:
 
     def _start_streaming(self, question):
         def run():
-            try:
-                for chunk in self.gemini.stream(question):
-                    self.message_queue.put(('chunk', chunk))
-            except Exception as e:
-                self.message_queue.put(('chunk', f'\n[Error: {e}]'))
-            finally:
-                self.message_queue.put(('done', None))
+            retries = 2
+            for attempt in range(retries + 1):
+                try:
+                    for chunk in self.gemini.stream(question):
+                        self.message_queue.put(('chunk', chunk))
+                    return # Success!
+                except Exception as e:
+                    if "429" in str(e) and attempt < retries:
+                        self.message_queue.put(('chunk', f"\n[Rate limit hit, retrying in 2s... attempt {attempt+1}]"))
+                        time.sleep(2)
+                        continue
+                    self.message_queue.put(('chunk', f'\n[Error: {e}]'))
+                    break
+            self.message_queue.put(('done', None))
         threading.Thread(target=run, daemon=True).start()
 
     # ─── Window Controls ──────────────────────────────────────────────────────

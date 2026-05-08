@@ -95,7 +95,7 @@ class VoiceListener:
         try:
             with sr.AudioFile(buf) as source:
                 audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data, language='hi-IN')
+            text = recognizer.recognize_google(audio_data, language='en-IN')
             if text.strip():
                 self.on_status('✅  Got it! Sending to AI…')
                 self.on_question(text.strip())
