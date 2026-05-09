@@ -91,7 +91,7 @@ class GhostAssistant:
         ft = tk.Frame(self.main_container, bg='#0a0a14', height=22)
         ft.pack(side='bottom', fill='x')
         ft.pack_propagate(False)
-        tk.Label(ft, text='F9: mic │ Alt+T: text │ Alt+S: screen │ Alt+B: Ultra-Stealth │ Alt+X: PANIC',
+        tk.Label(ft, text='F9: mic+speaker │ Alt+T: text │ Alt+S: screen │ Alt+B: Stealth │ Alt+X: PANIC',
                  bg='#0a0a14', fg='#4b5563', font=('Segoe UI', 7)).pack(pady=3)
 
         # ── Manual Text Input ──
@@ -128,6 +128,7 @@ class GhostAssistant:
                                spacing1=4, spacing3=4)
         self.answer.tag_config('code_lang',   foreground='#475569', font=('Consolas', 8),
                                background='#0f172a')
+        self.answer.tag_config('current_word', background='#fbbf24', foreground='#0d0d1a')  # Yellow teleprompter highlight
 
     def _copy_text(self, event=None):
         try:
@@ -276,8 +277,9 @@ class GhostAssistant:
                     self._show_question(data)
                     self._start_streaming(data)
                 elif kind == 'chunk':
-                    # Render ONE chunk, then yield back so the screen can repaint (typewriter effect)
-                    self._append_chunk(data)
+                    # Re-render with live markdown on every chunk (ChatGPT style)
+                    self._answer_buffer.append(data)
+                    self._render_markdown(''.join(self._answer_buffer))
                     self.root.update_idletasks()
                     self.root.after(25, self.process_queue)
                     return
@@ -286,9 +288,6 @@ class GhostAssistant:
                 elif kind == 'done':
                     self.status_lbl.config(text='F9/Alt+T/Alt+S active │ Alt+X: Panic')
                     self._save_history()
-                    full_text = ''.join(self._answer_buffer)
-                    if full_text.strip():
-                        self._render_markdown(full_text)
                 elif kind == 'grab_screenshot':
                     self.on_status('📸 Capturing screen...')
                     self._take_screenshot_and_send()
@@ -376,10 +375,21 @@ class GhostAssistant:
 
     def _append_chunk(self, chunk):
         self._answer_buffer.append(chunk)  # Buffer for history
-        # Show raw text while streaming for live feel
         self.answer.config(state='normal')
+        # Remove previous highlight
+        self.answer.tag_remove('current_word', '1.0', 'end')
+        # Insert the new chunk
         self.answer.insert('end', chunk, 'normal')
-        # self.answer.see('end')  # REMOVED: Don't force scroll to bottom
+        # Highlight the last word just inserted (teleprompter effect)
+        end_idx = self.answer.index('end-1c')
+        words = chunk.strip().split()
+        if words:
+            last_word = words[-1]
+            search_start = f'end-{len(chunk)+1}c'
+            pos = self.answer.search(last_word, search_start, stopindex='end', regexp=False)
+            if pos:
+                word_end = f'{pos}+{len(last_word)}c'
+                self.answer.tag_add('current_word', pos, word_end)
         self.answer.config(state='disabled')
         self._force_geometry()
 
@@ -404,8 +414,32 @@ class GhostAssistant:
                         self.answer.insert('end', f' {code_lang}\n', 'code_lang')
                 else:
                     in_code_block = False
-                    full_code = '\n'.join(code_lines) + '\n'
-                    self.answer.insert('end', full_code, 'code_block')
+                    full_code = '\n'.join(code_lines)
+
+                    # ── Embed a "Copy Code" button above code block ──
+                    def make_copy_cmd(code=full_code):
+                        def _copy():
+                            self.root.clipboard_clear()
+                            self.root.clipboard_append(code)
+                            self.root.update()
+                        return _copy
+
+                    btn = tk.Button(
+                        self.answer,
+                        text='📋 Copy Code',
+                        command=make_copy_cmd(),
+                        bg='#1e293b', fg='#94a3b8',
+                        font=('Segoe UI', 7),
+                        relief='flat', bd=0,
+                        cursor='hand2',
+                        padx=6, pady=1,
+                        activebackground='#334155',
+                        activeforeground='#e2e8f0'
+                    )
+                    self.answer.insert('end', '\n')
+                    self.answer.window_create('end', window=btn)
+                    self.answer.insert('end', '\n')
+                    self.answer.insert('end', full_code + '\n', 'code_block')
                     code_lines = []
                     code_lang = ''
                 continue

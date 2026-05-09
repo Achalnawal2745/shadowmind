@@ -5,3 +5,5 @@ keyboard
 pyperclip
 mss
 Pillow
+numpy
+soundcard
