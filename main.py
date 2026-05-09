@@ -91,7 +91,7 @@ class GhostAssistant:
         ft = tk.Frame(self.main_container, bg='#0a0a14', height=22)
         ft.pack(side='bottom', fill='x')
         ft.pack_propagate(False)
-        tk.Label(ft, text='F9: mic │ Alt+T: text │ Alt+S: screen │ Alt+X: PANIC │ Ctrl+Arrows: Move │ Alt+↑↓: Scroll',
+        tk.Label(ft, text='F9: mic │ Alt+T: text │ Alt+S: screen │ Alt+B: Ultra-Stealth │ Alt+X: PANIC',
                  bg='#0a0a14', fg='#4b5563', font=('Segoe UI', 7)).pack(pady=3)
 
         # ── Manual Text Input ──
@@ -220,6 +220,9 @@ class GhostAssistant:
             keyboard.add_hotkey('alt+up', lambda: self.scroll_answer(-3))
             keyboard.add_hotkey('alt+down', lambda: self.scroll_answer(3))
             
+            # Ultra Stealth Toggle
+            keyboard.add_hotkey('alt+b', self.toggle_stealth_style)
+
             # THE PANIC BUTTON: Instantly kill and clean up
             keyboard.add_hotkey('alt+x', self.panic_exit)
 
@@ -306,6 +309,20 @@ class GhostAssistant:
         except queue.Empty:
             pass
         self.root.after(30, self.process_queue)
+
+    def toggle_stealth_style(self):
+        """Toggle between Normal and Ultra-Stealth (transparent/gray) mode."""
+        if not hasattr(self, '_is_ultra_stealth'): self._is_ultra_stealth = False
+        self._is_ultra_stealth = not self._is_ultra_stealth
+        
+        if self._is_ultra_stealth:
+            self.root.attributes('-alpha', 0.4) # Very transparent
+            self.answer.config(fg='#4b5563')   # Dim gray text
+            self.on_status("🕵️ Stealth Mode ON")
+        else:
+            self.root.attributes('-alpha', 0.93)
+            self.answer.config(fg='#e2e8f0')   # Normal bright text
+            self.on_status("👁️ Normal Mode ON")
 
     def _read_clipboard_and_send(self):
         import pyperclip

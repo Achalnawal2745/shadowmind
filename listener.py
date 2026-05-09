@@ -40,15 +40,20 @@ class VoiceListener:
                 self.recording = True
                 self.frames = []
                 self.on_status('🔴  Recording…  (release F9 when done)')
-                self.stream = self.audio.open(
-                    format=self.FORMAT,
-                    channels=self.CHANNELS,
-                    rate=self.RATE,
-                    input=True,
-                    frames_per_buffer=self.CHUNK
-                )
-                t = threading.Thread(target=self._record_loop, daemon=True)
-                t.start()
+                try:
+                    self.stream = self.audio.open(
+                        format=self.FORMAT,
+                        channels=self.CHANNELS,
+                        rate=self.RATE,
+                        input=True,
+                        frames_per_buffer=self.CHUNK
+                    )
+                    t = threading.Thread(target=self._record_loop, daemon=True)
+                    t.start()
+                except Exception as e:
+                    self.recording = False
+                    self.on_status(f"❌ Mic Error: {e}")
+                    print(f"[Mic Error] {e}")
 
     def _on_release(self, _):
         with self._lock:

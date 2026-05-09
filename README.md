@@ -22,6 +22,7 @@ ShadowMind is a high-performance, invisible AI assistant designed for support du
 | **`F9`** | **Voice Input** (Push-to-talk mic input) |
 | **`Ctrl + Arrows`** | **Move Window** (Moves app without clicking/focus loss) |
 | **`Alt + Arrows`** | **Scroll Answer** (Scrolls output without clicking) |
+| **`Alt + B`** | **Ultra-Stealth Toggle** (Transparent / Dim Mode) |
 | **`Alt + X`** | **PANIC BUTTON** (Instantly kills app & deletes evidence) |
 | **`Ctrl + Q`** | Safe Exit |
 
