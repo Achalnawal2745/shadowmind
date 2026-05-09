@@ -26,8 +26,8 @@ CHANNELS    = 1
 
 class VoiceListener:
     """
-    Hold F9 → records BOTH mic + speaker audio simultaneously
-    Release F9 → mixes both, transcribes with Google STT → fires on_question callback
+    Hold F9 → records BOTH mic + speaker simultaneously
+    Release F9 → mixes, transcribes, fires on_question callback
     """
 
     def __init__(self, on_question, on_status=None):
@@ -38,16 +38,38 @@ class VoiceListener:
 
         self._mic_frames     = []
         self._speaker_frames = []
+        self._mic_stream     = None
 
-        # PyAudio for mic
+        # Pre-init PyAudio ONCE at startup (fast from here on)
         if PYAUDIO_AVAILABLE:
             import pyaudio
             self._pa     = pyaudio.PyAudio()
             self._FORMAT = pyaudio.paInt16
-        self._mic_stream = None
+        else:
+            self._pa = None
+
+        # Pre-find the loopback device ONCE at startup
+        self._loopback_device    = None
+        self._loopback_dev_name  = None
+        self._init_loopback()
+
+    def _init_loopback(self):
+        """Find and store the current default speaker loopback device."""
+        if not SOUNDCARD_AVAILABLE:
+            return
+        try:
+            spk_name = str(sc.default_speaker().name)
+            if spk_name == self._loopback_dev_name:
+                return  # Same device, no need to re-init
+            self._loopback_device   = sc.get_microphone(id=spk_name, include_loopback=True)
+            self._loopback_dev_name = spk_name
+            print(f"[Loopback] Device: {spk_name}")
+        except Exception as e:
+            self._loopback_device   = None
+            self._loopback_dev_name = None
+            print(f"[Loopback] Not available: {e}")
 
     def start(self):
-        """Block forever, listening for F9 press/release."""
         keyboard.on_press_key('f9',   self._on_press)
         keyboard.on_release_key('f9', self._on_release)
         keyboard.wait()
@@ -57,24 +79,28 @@ class VoiceListener:
     def _on_press(self, _):
         with self._lock:
             if not self.recording:
+                # Check if audio device changed (e.g. plugged in headphones)
+                self._init_loopback()
+
                 self.recording       = True
                 self._mic_frames     = []
                 self._speaker_frames = []
-                self.on_status('🔴 Recording [Mic + Speaker]…  release F9 when done')
 
-                # Thread 1: Mic recording
+                spk_label = "Mic+Speaker" if self._loopback_device else "Mic only"
+                self.on_status(f'🔴 Recording [{spk_label}]… release F9 when done')
+
+                # Thread 1: Mic
                 threading.Thread(target=self._record_mic, daemon=True).start()
 
-                # Thread 2: Speaker loopback (only if soundcard is available)
-                if SOUNDCARD_AVAILABLE:
+                # Thread 2: Speaker loopback (only if device found)
+                if self._loopback_device:
                     threading.Thread(target=self._record_speaker, daemon=True).start()
 
     def _on_release(self, _):
         with self._lock:
             if self.recording:
                 self.recording = False
-
-                # Close mic stream
+                # Close mic stream immediately
                 if self._mic_stream:
                     try:
                         self._mic_stream.stop_stream()
@@ -83,8 +109,8 @@ class VoiceListener:
                         pass
                     self._mic_stream = None
 
-                # Small wait so both threads finish their last chunk
-                threading.Timer(0.2, self._process_and_transcribe).start()
+        # Transcribe in background thread (no timer delay)
+        threading.Thread(target=self._process_and_transcribe, daemon=True).start()
 
     # ─── Mic Recording ────────────────────────────────────────────────────────
 
@@ -107,23 +133,17 @@ class VoiceListener:
         except Exception as e:
             self.on_status(f"❌ Mic Error: {e}")
 
-    # ─── Speaker (Loopback) Recording ─────────────────────────────────────────
+    # ─── Speaker Loopback ─────────────────────────────────────────────────────
 
     def _record_speaker(self):
         try:
-            loopback = sc.get_microphone(
-                id=str(sc.default_speaker().name),
-                include_loopback=True
-            )
-            with loopback.recorder(samplerate=SAMPLE_RATE, channels=1) as recorder:
+            with self._loopback_device.recorder(samplerate=SAMPLE_RATE, channels=1) as recorder:
                 while self.recording:
                     chunk = recorder.record(numframes=CHUNK_SIZE)
-                    # float32 → int16 PCM bytes
-                    pcm = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                    pcm   = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
                     self._speaker_frames.append(pcm)
         except Exception as e:
-            # Silently fail — mic alone will still work
-            print(f"[Speaker Loopback] {e}")
+            print(f"[Loopback record error] {e}")
 
     # ─── Mix + Transcribe ─────────────────────────────────────────────────────
 
@@ -132,41 +152,28 @@ class VoiceListener:
             self.on_status('❓ Nothing recorded — try again (Hold F9)')
             return
 
-        self.on_status('⏳ Mixing & Transcribing…')
-
+        self.on_status('⏳ Transcribing…')
         try:
-            # Convert mic frames to numpy int16
             mic_np = np.frombuffer(b''.join(self._mic_frames), dtype=np.int16).astype(np.float32)
 
             if self._speaker_frames:
-                # Convert speaker frames to numpy int16
-                spk_np = np.frombuffer(b''.join(self._speaker_frames), dtype=np.int16).astype(np.float32)
-
-                # Match lengths (trim longer one)
+                spk_np  = np.frombuffer(b''.join(self._speaker_frames), dtype=np.int16).astype(np.float32)
                 min_len = min(len(mic_np), len(spk_np))
-                mic_np  = mic_np[:min_len]
-                spk_np  = spk_np[:min_len]
-
-                # Mix: average both signals (prevents clipping)
-                mixed = ((mic_np * 0.6) + (spk_np * 0.8)) / 2.0
+                mixed   = ((mic_np[:min_len] * 0.6) + (spk_np[:min_len] * 0.8)) / 2.0
             else:
-                # Speaker capture failed, use mic only
                 mixed = mic_np
 
-            # Clip and convert back to int16
             mixed_int16 = np.clip(mixed, -32767, 32767).astype(np.int16)
 
-            # Write to WAV buffer
             buf = io.BytesIO()
             wf  = wave.open(buf, 'wb')
             wf.setnchannels(CHANNELS)
-            wf.setsampwidth(2)  # int16 = 2 bytes
+            wf.setsampwidth(2)
             wf.setframerate(SAMPLE_RATE)
             wf.writeframes(mixed_int16.tobytes())
             wf.close()
             buf.seek(0)
 
-            # Send to Google STT
             recognizer = sr.Recognizer()
             with sr.AudioFile(buf) as source:
                 audio_data = recognizer.record(source)
