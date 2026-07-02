@@ -5,6 +5,8 @@ import numpy as np
 import speech_recognition as sr
 import keyboard
 
+import sys
+
 try:
     import soundcard as sc
     SOUNDCARD_AVAILABLE = True
@@ -16,7 +18,12 @@ try:
     import pyaudio
     PYAUDIO_AVAILABLE = True
 except ImportError:
-    PYAUDIO_AVAILABLE = False
+    try:
+        import pyaudiowpatch as pyaudio
+        sys.modules['pyaudio'] = pyaudio
+        PYAUDIO_AVAILABLE = True
+    except ImportError:
+        PYAUDIO_AVAILABLE = False
 
 
 SAMPLE_RATE = 16000
