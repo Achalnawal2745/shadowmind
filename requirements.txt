@@ -1,5 +1,5 @@
 speechrecognition
-pyaudio
+PyAudioWPatch
 google-genai
 keyboard
 pyperclip
@@ -7,3 +7,4 @@ mss
 Pillow
 numpy
 soundcard
+pyinstaller

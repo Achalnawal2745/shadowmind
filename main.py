@@ -17,6 +17,12 @@ from config import load_config, save_config
 
 class GhostAssistant:
     def __init__(self):
+        import sys
+        if getattr(sys, 'frozen', False):
+            self.base_dir = os.path.dirname(sys.executable)
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
+
         self.config = load_config()
         self.message_queue = queue.Queue()
         self.current_stream_id = 0  # Used to cancel old requests
@@ -345,8 +351,9 @@ class GhostAssistant:
             pyperclip.copy('') # Clear clipboard
             # Delete files
             for f in ['history.md', 'last_screenshot_seen_by_ai.png']:
-                if os.path.exists(f):
-                    os.remove(f)
+                path = os.path.join(self.base_dir, f)
+                if os.path.exists(path):
+                    os.remove(path)
         except:
             pass
         os._exit(0) # Force kill immediately
@@ -359,7 +366,7 @@ class GhostAssistant:
                 return
             import datetime
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            history_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'history.md')
+            history_path = os.path.join(self.base_dir, 'history.md')
             with open(history_path, 'a', encoding='utf-8') as f:
                 f.write(f"\n---\n**[{ts}]**\n\n**Q:** {question}\n\n**A:** {answer}\n")
         except Exception as e:
@@ -547,7 +554,8 @@ class GhostAssistant:
                 img_bytes = buf.getvalue()
                 
                 # Save a copy so the user can verify what was captured
-                with open("last_screenshot_seen_by_ai.png", "wb") as f:
+                screenshot_path = os.path.join(self.base_dir, "last_screenshot_seen_by_ai.png")
+                with open(screenshot_path, "wb") as f:
                     f.write(img_bytes)
 
                 self._show_question("📸 Screen captured! Sending to AI...")

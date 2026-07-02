@@ -10,3 +10,8 @@ config.json
 *.log
 history.md
 last_screenshot_seen_by_ai.png
+
+# PyInstaller
+build/
+dist/
+*.spec
