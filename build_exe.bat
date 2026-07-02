@@ -7,11 +7,27 @@ echo  ============================================
 echo.
 
 :: Check and activate virtual environment
-if exist venv\Scripts\activate.bat (
+if not exist venv\Scripts\activate.bat (
+    echo [!] Virtual environment venv not found. Creating it now...
+    python -m venv venv
+    if errorlevel 1 (
+        echo [X] Failed to create virtual environment. Please verify Python is installed on your system PATH.
+        pause
+        exit /b 1
+    )
     echo [✓] Activating Virtual Environment...
     call venv\Scripts\activate.bat
+    echo [✓] Upgrading pip and installing project dependencies...
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt
+    if errorlevel 1 (
+        echo [X] Failed to install dependencies.
+        pause
+        exit /b 1
+    )
 ) else (
-    echo [!] Warning: venv not found. Using system environment.
+    echo [✓] Activating Virtual Environment...
+    call venv\Scripts\activate.bat
 )
 
 
@@ -30,10 +46,14 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b %ERRORLEVEL%
 )
 
-:: Copy config.json to dist directory so it's ready to use next to the exe
-echo [✓] Copying config.json to dist/ folder...
+:: Copy config.json to dist directory only if it doesn't already exist
 if not exist dist mkdir dist
-copy config.json dist\config.json /Y
+if not exist dist\config.json (
+    echo [✓] Copying default config.json to dist/ folder...
+    copy config.json dist\config.json /Y
+) else (
+    echo [✓] Key Preservation: dist\config.json already exists, keeping your current API keys intact.
+)
 
 echo.
 echo  ============================================
