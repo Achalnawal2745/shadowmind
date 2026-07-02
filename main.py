@@ -188,10 +188,14 @@ class GhostAssistant:
     # ─── Assistant Setup ──────────────────────────────────────────────────────
 
     def setup_assistant(self):
-        if not self.config.get('api_key'):
+        if not self.config.get('api_key') and not self.config.get('groq_api_key') and not self.config.get('openrouter_api_key'):
             self.ask_api_key()
 
-        self.gemini = GeminiClient(self.config.get('api_key', ''))
+        self.gemini = GeminiClient(
+            gemini_key=self.config.get('api_key', ''),
+            groq_key=self.config.get('groq_api_key', ''),
+            openrouter_key=self.config.get('openrouter_api_key', '')
+        )
 
         self.listener = VoiceListener(
             on_question=self.on_question,
