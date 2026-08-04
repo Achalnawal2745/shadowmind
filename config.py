@@ -23,3 +23,4 @@ def load_config() -> dict:
 def save_config(config: dict):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
+

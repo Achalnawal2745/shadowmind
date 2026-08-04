@@ -23,42 +23,32 @@ FALLBACK_CHAIN = [
     {
         "provider": "gemini",
         "model": "gemini-2.5-flash",
-        "name": "Gemini Direct"
+        "name": "Gemini Direct",
+        "supports_vision": True
     },
     {
         "provider": "groq",
-        "model": "qwen/qwen3.6-27b",
-        "name": "Groq Qwen 3.6"
+        "model": "llama-3.2-90b-vision-preview",
+        "name": "Groq Llama 3.2 90B Vision",
+        "supports_vision": True
     },
     {
         "provider": "groq",
-        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
-        "name": "Groq Llama 4"
-    },
-    {
-        "provider": "openrouter",
-        "model": "google/gemma-4-31b-it:free",
-        "name": "OpenRouter Gemma 4"
+        "model": "llama-3.2-11b-vision-preview",
+        "name": "Groq Llama 3.2 11B Vision",
+        "supports_vision": True
     },
     {
         "provider": "openrouter",
         "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-        "name": "OpenRouter Nemotron Omni"
+        "name": "OpenRouter Nemotron Omni",
+        "supports_vision": True
     },
     {
         "provider": "openrouter",
         "model": "nvidia/nemotron-nano-12b-v2-vl:free",
-        "name": "OpenRouter Nemotron VL"
-    },
-    {
-        "provider": "openrouter",
-        "model": "qwen/qwen3-coder:free",
-        "name": "OpenRouter Qwen 3 Coder"
-    },
-    {
-        "provider": "openrouter",
-        "model": "openai/gpt-oss-120b:free",
-        "name": "OpenRouter GPT-OSS 120B"
+        "name": "OpenRouter Nemotron VL",
+        "supports_vision": True
     }
 ]
 
@@ -114,16 +104,17 @@ def stream_openai_compatible(api_key: str, base_url: str, model_id: str, message
 
 
 class GeminiClient:
-    """Client wrapper that manages history and dynamically cascades down a 6-model fallback chain."""
-    def __init__(self, gemini_key: str, groq_key: str = "", openrouter_key: str = ""):
-        self.gemini_key = gemini_key
+    """Client wrapper that manages history and dynamically cascades down a multi-key fallback chain."""
+    def __init__(self, gemini_key=None, groq_key: str = "", openrouter_key: str = ""):
+        if isinstance(gemini_key, list):
+            self.gemini_keys = [k.strip() for k in gemini_key if isinstance(k, str) and k.strip()]
+        elif isinstance(gemini_key, str) and gemini_key.strip():
+            self.gemini_keys = [gemini_key.strip()]
+        else:
+            self.gemini_keys = []
+            
         self.groq_key = groq_key
         self.openrouter_key = openrouter_key
-        
-        self.gemini_client = None
-        if gemini_key and gemini_key.strip():
-            self.gemini_client = genai.Client(api_key=gemini_key)
-            
         self.history = []  # List of {"role": "user"/"assistant", "content": str or list}
 
     def clear_history(self):
@@ -146,23 +137,53 @@ class GeminiClient:
         # Trim history
         if len(self.history) > MAX_HISTORY * 2:
             self.history = self.history[-(MAX_HISTORY * 2):]
+            
+        # Check if the conversation contains any images
+        has_images = False
+        for msg in self.history:
+            if isinstance(msg["content"], list):
+                for item in msg["content"]:
+                    if item.get("type") == "image":
+                        has_images = True
+                        break
+            if has_images:
+                break
+
+        # Build dynamic effective fallback chain (including all provided Gemini keys)
+        effective_chain = []
+        for idx, g_key in enumerate(self.gemini_keys):
+            name = f"Gemini Key #{idx+1}" if len(self.gemini_keys) > 1 else "Gemini Direct"
+            effective_chain.append({
+                "provider": "gemini",
+                "model": "gemini-2.5-flash",
+                "name": name,
+                "key": g_key,
+                "supports_vision": True
+            })
+
+        for candidate in FALLBACK_CHAIN:
+            if candidate["provider"] == "gemini":
+                continue
+            cand_copy = dict(candidate)
+            if candidate["provider"] == "groq":
+                cand_copy["key"] = self.groq_key
+            elif candidate["provider"] == "openrouter":
+                cand_copy["key"] = self.openrouter_key
+            effective_chain.append(cand_copy)
 
         last_error = None
         fallback_active = False
 
-        for candidate in FALLBACK_CHAIN:
+        for candidate in effective_chain:
             provider = candidate["provider"]
             model_id = candidate["model"]
             friendly_name = candidate["name"]
+            supports_vision = candidate.get("supports_vision", False)
+            key = candidate.get("key", "")
             
-            # Fetch relevant key
-            key = None
-            if provider == "gemini":
-                key = self.gemini_key
-            elif provider == "groq":
-                key = self.groq_key
-            elif provider == "openrouter":
-                key = self.openrouter_key
+            # Skip text-only models if we have images in history
+            if has_images and not supports_vision:
+                continue
                 
             if not key or not key.strip():
                 # Skip if key is not configured
@@ -174,9 +195,7 @@ class GeminiClient:
             try:
                 full_answer = []
                 if provider == "gemini":
-                    # Initialize client lazily if needed
-                    if not self.gemini_client:
-                        self.gemini_client = genai.Client(api_key=key)
+                    gemini_client = genai.Client(api_key=key)
                     
                     config = types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
@@ -199,7 +218,7 @@ class GeminiClient:
                                     
                         gemini_contents.append(types.Content(role=gemini_role, parts=parts))
                         
-                    response = self.gemini_client.models.generate_content_stream(
+                    response = gemini_client.models.generate_content_stream(
                         model=model_id,
                         contents=gemini_contents,
                         config=config

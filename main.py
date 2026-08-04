@@ -194,11 +194,22 @@ class GhostAssistant:
     # ─── Assistant Setup ──────────────────────────────────────────────────────
 
     def setup_assistant(self):
-        if not self.config.get('api_key') and not self.config.get('groq_api_key') and not self.config.get('openrouter_api_key'):
+        # Extract all configured Gemini keys
+        gemini_keys = []
+        if self.config.get('api_key'):
+            gemini_keys.append(self.config.get('api_key').strip())
+        
+        for i in range(1, 10):
+            for k_name in [f'gemini_api_key_{i}', f'gemini_key_{i}', f'api_key_{i}']:
+                val = self.config.get(k_name)
+                if val and isinstance(val, str) and val.strip() and val.strip() not in gemini_keys:
+                    gemini_keys.append(val.strip())
+
+        if not gemini_keys and not self.config.get('groq_api_key') and not self.config.get('openrouter_api_key'):
             self.ask_api_key()
 
         self.gemini = GeminiClient(
-            gemini_key=self.config.get('api_key', ''),
+            gemini_key=gemini_keys,
             groq_key=self.config.get('groq_api_key', ''),
             openrouter_key=self.config.get('openrouter_api_key', '')
         )
