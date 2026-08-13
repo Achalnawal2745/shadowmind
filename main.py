@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import simpledialog
+from tkinter import simpledialog, messagebox
 import ctypes
 import threading
 import queue
@@ -13,6 +13,7 @@ import io
 from listener import VoiceListener
 from ai_client import GeminiClient
 from config import load_config, save_config
+from stealth import StealthEngine
 
 
 class GhostAssistant:
@@ -75,18 +76,37 @@ class GhostAssistant:
         tk.Label(hdr, text='👻  ShadowMind', bg='#1a1a2e',
                  fg='#a78bfa', font=('Segoe UI', 10, 'bold')).pack(side='left', padx=10, pady=6)
 
+        # ── ℹ️ Info button ──
+        self.info_btn = tk.Button(
+            hdr, text='ℹ️', bg='#1a1a2e', fg='#6b7280',
+            font=('Segoe UI', 9), relief='flat', bd=0, cursor='hand2',
+            activebackground='#2d2d4e', activeforeground='#a78bfa',
+            command=self.show_stealth_info
+        )
+        self.info_btn.pack(side='right', padx=(0, 6), pady=4)
+
+        # ── 🛡️ Super Stealth toggle button ──
+        self.stealth_btn = tk.Button(
+            hdr, text='🛡️ Super Stealth', bg='#1f2937', fg='#9ca3af',
+            font=('Segoe UI', 8, 'bold'), relief='flat', bd=0, cursor='hand2',
+            activebackground='#374151', activeforeground='#a78bfa',
+            command=self.toggle_super_stealth
+        )
+        self.stealth_btn.pack(side='right', padx=(0, 4), pady=4)
+
         self.status_lbl = tk.Label(hdr, text='ShadowMind Active │ Alt+X: Panic',
                                    bg='#1a1a2e', fg='#6b7280', font=('Segoe UI', 8))
         self.status_lbl.pack(side='right', padx=10)
 
         # ── Question strip ──
-        qf = tk.Frame(self.main_container, bg='#111827')
+        qf = tk.Frame(self.main_container, bg='#111827', height=28)
         qf.pack(fill='x', padx=0)
+        qf.pack_propagate(False)
         tk.Label(qf, text='Q:', bg='#111827', fg='#6b7280',
-                 font=('Segoe UI', 8, 'bold')).pack(side='left', padx=(10, 4), pady=5)
+                 font=('Segoe UI', 8, 'bold')).pack(side='left', padx=(10, 4), pady=4)
         self.q_lbl = tk.Label(qf, text='—', bg='#111827', fg='#9ca3af',
-                              font=('Segoe UI', 8), wraplength=300, justify='left', anchor='w')
-        self.q_lbl.pack(side='left', pady=5, fill='x', expand=True)
+                              font=('Segoe UI', 8), anchor='w')
+        self.q_lbl.pack(side='left', pady=4, fill='x', expand=True)
 
         self.copy_btn = tk.Button(qf, text="📋 Copy", bg='#1f2937', fg='#9ca3af', bd=0, font=('Segoe UI', 7), cursor='hand2', command=self.copy_all)
         self.copy_btn.pack(side='right', padx=10, pady=2)
@@ -109,6 +129,7 @@ class GhostAssistant:
         self.manual_entry.bind('<Return>', self.submit_manual)
         self.manual_entry.insert(0, " Type question here & press Enter...")
         self.manual_entry.bind("<FocusIn>", lambda args: self.manual_entry.delete('0', 'end') if "Type question" in self.manual_entry.get() else None)
+        self.manual_entry.bind("<Button-1>", lambda args: (self.manual_entry.focus_force(), self.manual_entry.delete('0', 'end') if "Type question" in self.manual_entry.get() else None))
 
         # ── Answer area ──
         af = tk.Frame(self.main_container, bg='#0d0d1a')
@@ -223,35 +244,71 @@ class GhostAssistant:
         t.start()
 
         self.ghost_mode = False
+        self._super_stealth_active = False
+        self._stealth_engine = None
+        self._keyboard_hotkey_handles = []  # Track handles for unhooking
 
-        # global hotkeys (non-blocking)
+        # global hotkeys (non-blocking) — used in normal mode
+        self._register_keyboard_hotkeys()
+
+        # Cloak the process name at startup (always active, harmless)
+        StealthEngine.cloak_process()
+
+        self.root.after(80, self.process_queue)
+
+    def _register_keyboard_hotkeys(self):
+        """Register all hotkeys using the keyboard library (normal mode)."""
+        self._keyboard_hotkey_handles = []
         try:
             import keyboard
-            keyboard.add_hotkey('alt+a', self.toggle_visibility)
-            keyboard.add_hotkey('ctrl+q', self.quit)
-            keyboard.add_hotkey('alt+t', lambda: self.message_queue.put(('grab_clipboard', None)))
-            keyboard.add_hotkey('alt+s', lambda: self.message_queue.put(('grab_screenshot', None)))
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('alt+a', self.toggle_visibility))
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('ctrl+q', self.quit))
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('alt+t', lambda: self.message_queue.put(('grab_clipboard', None))))
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('alt+s', lambda: self.message_queue.put(('grab_screenshot', None))))
             
-            # Safe Movement Hotkeys (No clicking required!)
-            keyboard.add_hotkey('ctrl+up', lambda: self.move_window(0, -50))
-            keyboard.add_hotkey('ctrl+down', lambda: self.move_window(0, 50))
-            keyboard.add_hotkey('ctrl+left', lambda: self.move_window(-50, 0))
-            keyboard.add_hotkey('ctrl+right', lambda: self.move_window(50, 0))
+            # Safe Movement Hotkeys
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('ctrl+up', lambda: self.move_window(0, -50)))
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('ctrl+down', lambda: self.move_window(0, 50)))
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('ctrl+left', lambda: self.move_window(-50, 0)))
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('ctrl+right', lambda: self.move_window(50, 0)))
             
-            # Safe Scrolling Hotkeys (No clicking required!)
-            keyboard.add_hotkey('alt+up', lambda: self.scroll_answer(-3))
-            keyboard.add_hotkey('alt+down', lambda: self.scroll_answer(3))
+            # Safe Scrolling Hotkeys
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('alt+up', lambda: self.scroll_answer(-3)))
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('alt+down', lambda: self.scroll_answer(3)))
             
             # Ultra Stealth Toggle
-            keyboard.add_hotkey('alt+b', self.toggle_stealth_style)
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('alt+b', self.toggle_stealth_style))
 
-            # THE PANIC BUTTON: Instantly kill and clean up
-            keyboard.add_hotkey('alt+x', self.panic_exit)
+            # THE PANIC BUTTON
+            self._keyboard_hotkey_handles.append(
+                keyboard.add_hotkey('alt+x', self.panic_exit))
 
         except Exception as e:
             print(f"[WARN] Hotkeys unavailable: {e}")
 
-        self.root.after(80, self.process_queue)
+    def _unregister_keyboard_hotkeys(self):
+        """Remove all keyboard library hotkeys (used when Super Stealth takes over)."""
+        try:
+            import keyboard
+            for handle in self._keyboard_hotkey_handles:
+                try:
+                    keyboard.remove_hotkey(handle)
+                except Exception:
+                    pass
+            self._keyboard_hotkey_handles = []
+        except Exception:
+            pass
 
     def scroll_answer(self, units):
         # Thread-safe UI update
@@ -314,21 +371,74 @@ class GhostAssistant:
                     self._take_screenshot_and_send()
                 elif kind == 'grab_clipboard':
                     now = time.time()
-                    if hasattr(self, '_last_req_time') and now - self._last_req_time < 2:
-                        self.status_lbl.config(text='⏳ Please wait a moment...')
+                    if hasattr(self, '_last_req_time') and now - self._last_req_time < 1.0:
                         continue
                     self._last_req_time = now
+
+                    initial_text = ""
+                    try:
+                        initial_text = pyperclip.paste()
+                    except Exception:
+                        pass
+                    
+                    self._initial_clipboard_text = initial_text
                     pyperclip.copy('')
-                    self.status_lbl.config(text='⌛ Wait...')
-                    time.sleep(0.2)
-                    keyboard.release('alt')
-                    keyboard.release('t')
-                    keyboard.press_and_release('ctrl+c')
-                    self.status_lbl.config(text='📋 Reading text...')
-                    self.root.after(600, self._read_clipboard_and_send)
+                    self.status_lbl.config(text='📋 Reading selection...')
+
+                    def _do_grab():
+                        try:
+                            u32 = ctypes.windll.user32
+                            KEYUP = 0x0002
+                            
+                            # Give user a tiny fraction of a second to lift their fingers
+                            time.sleep(0.15)
+                            
+                            # Force release all common modifier keys just in case
+                            u32.keybd_event(0x12, 0, KEYUP, 0)  # Alt up
+                            u32.keybd_event(0x11, 0, KEYUP, 0)  # Ctrl up
+                            u32.keybd_event(0x10, 0, KEYUP, 0)  # Shift up
+                            u32.keybd_event(0x54, 0, KEYUP, 0)  # T up
+                            
+                            time.sleep(0.1) # Wait for OS to register release
+                            
+                            # Press Ctrl+C using hardware events
+                            u32.keybd_event(0x11, 0, 0, 0)      # Ctrl down
+                            time.sleep(0.02)
+                            u32.keybd_event(0x43, 0, 0, 0)      # C down
+                            time.sleep(0.05)
+                            u32.keybd_event(0x43, 0, KEYUP, 0)  # C up
+                            time.sleep(0.02)
+                            u32.keybd_event(0x11, 0, KEYUP, 0)  # Ctrl up
+                        except Exception as e:
+                            print(f"[Grab Error] {e}")
+
+                    threading.Thread(target=_do_grab, daemon=True).start()
+                    self._poll_attempts = 0
+                    self.root.after(350, self._poll_clipboard_and_send)
         except queue.Empty:
             pass
         self.root.after(30, self.process_queue)
+
+    def _poll_clipboard_and_send(self):
+        import pyperclip
+        try:
+            text = pyperclip.paste()
+            if text and len(text.strip()) > 1:
+                self.on_question(text.strip())
+                return
+        except Exception:
+            pass
+
+        self._poll_attempts += 1
+        if self._poll_attempts < 10:
+            self.root.after(100, self._poll_clipboard_and_send)
+        else:
+            # Fallback to pre-existing clipboard text if user used Ctrl+C manually
+            fallback = getattr(self, '_initial_clipboard_text', '')
+            if fallback and len(fallback.strip()) > 1:
+                self.on_question(fallback.strip())
+            else:
+                self.status_lbl.config(text='❌ No text selected - select text & try Alt+T')
 
     def toggle_stealth_style(self):
         """Toggle between Normal and Ultra-Stealth (transparent/gray) mode."""
@@ -344,19 +454,14 @@ class GhostAssistant:
             self.answer.config(fg='#e2e8f0')   # Normal bright text
             self.on_status("👁️ Normal Mode ON")
 
-    def _read_clipboard_and_send(self):
-        import pyperclip
-        try:
-            text = pyperclip.paste()
-            if text and len(text.strip()) > 1:
-                self.on_question(text.strip())
-            else:
-                self.status_lbl.config(text='❌ No text found - try again')
-        except Exception:
-            self.status_lbl.config(text='❌ Selection error')
-
     def panic_exit(self):
         """Instantly close and delete sensitive evidence."""
+        try:
+            # Deactivate stealth first
+            if self._stealth_engine:
+                self._stealth_engine.deactivate()
+        except:
+            pass
         try:
             import pyperclip
             pyperclip.copy('') # Clear clipboard
@@ -384,9 +489,10 @@ class GhostAssistant:
             print(f"[History] Save error: {e}")
 
     def _show_question(self, text):
-        self._current_question = text  # Save for history
+        self._current_question = text  # Save full question for AI & history
         self._answer_buffer = []       # Reset answer buffer
-        short = (text[:120] + '...') if len(text) > 120 else text
+        clean_preview = text.replace('\n', ' ').strip()
+        short = (clean_preview[:75] + '...') if len(clean_preview) > 75 else clean_preview
         self.q_lbl.config(text=short)
         self.answer.config(state='normal')
         self.answer.delete('1.0', 'end')
@@ -549,62 +655,185 @@ class GhostAssistant:
 
     def _take_screenshot_and_send(self):
         try:
-            with mss.MSS() as sct:
-                # sct.monitors[1] is ALWAYS the full 100% resolution of your primary screen
-                monitor = sct.monitors[1] 
-                sct_img = sct.grab(monitor)
-                
-                # Use Pillow to properly decode the raw Windows screen bytes
-                from PIL import Image
-                import io
-                img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                
-                # Convert to PNG bytes
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                img_bytes = buf.getvalue()
-                
-                # Save a copy so the user can verify what was captured
-                screenshot_path = os.path.join(self.base_dir, "last_screenshot_seen_by_ai.png")
-                with open(screenshot_path, "wb") as f:
-                    f.write(img_bytes)
+            from PIL import Image
+            import io
+            img_bytes = None
 
-                self._show_question("📸 Screen captured! Sending to AI...")
-                
-                # Check if user typed a specific instruction in the text box
-                user_instruction = self.manual_entry.get().strip()
-                
-                if user_instruction and user_instruction != "Type question here & press Enter...":
-                    prompt = (
-                        f"USER SPECIFIC INSTRUCTION: {user_instruction}\n\n"
-                        "Please analyze the attached screen capture strictly following the user instruction above. "
-                        "If it involves solving a problem, provide the direct answer/code first."
-                    )
-                    # Clear the box since we used it
-                    self.manual_entry.delete(0, 'end') 
+            # Method 1: Standard mss capture (works on most apps)
+            print("[Screenshot] Trying mss capture...")
+            try:
+                with mss.MSS() as sct:
+                    monitor = sct.monitors[1]
+                    sct_img = sct.grab(monitor)
+                    img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                    
+                    extrema = img.convert('L').getextrema()
+                    print(f"[Screenshot] mss extrema: {extrema}")
+                    if extrema[1] > 10:
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        img_bytes = buf.getvalue()
+                        print(f"[Screenshot] mss success: {len(img_bytes)} bytes")
+            except Exception as e:
+                print(f"[Screenshot] mss failed: {e}")
+
+            # Method 2: Stealth BitBlt/PrintWindow (bypasses some screen protection)
+            if not img_bytes:
+                print("[Screenshot] mss was black, trying stealth capture...")
+                stealth_bytes = StealthEngine.stealth_screenshot()
+                if stealth_bytes:
+                    img_bytes = stealth_bytes
+                    print(f"[Screenshot] Stealth success: {len(img_bytes)} bytes")
                 else:
-                    # Default optimized prompt
-                    prompt = (
-                        "Analyze this screen capture. "
-                        "If it contains a coding problem, interview question, or technical task, "
-                        "solve it immediately. Provide the direct answer or code first, followed by a very brief, concise explanation. "
-                        "If it is just a diagram or generic image, explain what it is briefly."
-                    )
-                
-                self._start_streaming(prompt, image_bytes=img_bytes)
+                    print("[Screenshot] Stealth also failed/black")
+
+            if not img_bytes:
+                self.on_status("⚠️ Screen capture blocked - try Alt+T instead")
+                print("[Screenshot] ALL methods failed")
+                return
+
+            # Save a copy so the user can verify what was captured
+            screenshot_path = os.path.join(self.base_dir, "last_screenshot_seen_by_ai.png")
+            with open(screenshot_path, "wb") as f:
+                f.write(img_bytes)
+
+            self._show_question("📸 Screen captured! Sending to AI...")
+            
+            # Check if user typed a specific instruction in the text box
+            user_instruction = self.manual_entry.get().strip()
+            
+            if user_instruction and user_instruction != "Type question here & press Enter...":
+                prompt = (
+                    f"USER SPECIFIC INSTRUCTION: {user_instruction}\n\n"
+                    "Please analyze the attached screen capture strictly following the user instruction above. "
+                    "If it involves solving a problem, provide the direct answer/code first."
+                )
+                self.manual_entry.delete(0, 'end') 
+            else:
+                prompt = (
+                    "Analyze this screen capture. "
+                    "If it contains a coding problem, interview question, or technical task, "
+                    "solve it immediately. Provide the direct answer or code first, followed by a very brief, concise explanation. "
+                    "If it is just a diagram or generic image, explain what it is briefly."
+                )
+            
+            self._start_streaming(prompt, image_bytes=img_bytes)
         except Exception as e:
+            print(f"[Screenshot] Exception: {e}")
             self.on_status(f"❌ Screenshot failed: {e}")
+
+    # ─── Super Stealth Toggle ─────────────────────────────────────────────────
+
+    def toggle_super_stealth(self):
+        """Toggle Super Stealth mode — enables SEB bypass."""
+        if self._super_stealth_active:
+            # ── DEACTIVATE ──
+            self._super_stealth_active = False
+            if self._stealth_engine:
+                self._stealth_engine.deactivate()
+                self._stealth_engine = None
+
+            # Re-register keyboard library hotkeys (normal mode)
+            self._register_keyboard_hotkeys()
+
+            self.stealth_btn.config(
+                text='🛡️ Super Stealth', bg='#1f2937', fg='#9ca3af'
+            )
+            self.on_status('🛡️ Super Stealth OFF — Normal mode')
+        else:
+            # ── ACTIVATE ──
+            self._super_stealth_active = True
+
+            # IMPORTANT: Remove keyboard library hotkeys first!
+            # Otherwise both keyboard lib AND RegisterHotKey fire = double toggle
+            self._unregister_keyboard_hotkeys()
+
+            # Get the real HWND
+            self.root.update()
+            try:
+                hwnd = int(self.root.wm_frame(), 16)
+            except Exception:
+                hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+
+            # Define hotkey callbacks (matching IDs in stealth.py)
+            callbacks = {
+                1: lambda: self.message_queue.put(('grab_screenshot', None)),  # Alt+S
+                2: lambda: self.message_queue.put(('grab_clipboard', None)),   # Alt+T
+                3: self.toggle_visibility,                                      # Alt+A
+                4: self.panic_exit,                                             # Alt+X
+                5: self.toggle_stealth_style,                                   # Alt+B
+                6: self.quit,                                                   # Ctrl+Q
+                7: lambda: self.scroll_answer(-3),                              # Alt+Up
+                8: lambda: self.scroll_answer(3),                               # Alt+Down
+                9: lambda: self.move_window(0, -50),                            # Ctrl+Up
+                10: lambda: self.move_window(0, 50),                            # Ctrl+Down
+                11: lambda: self.move_window(-50, 0),                           # Ctrl+Left
+                12: lambda: self.move_window(50, 0),                            # Ctrl+Right
+            }
+
+            self._stealth_engine = StealthEngine(
+                root=self.root, hwnd=hwnd, callbacks=callbacks
+            )
+            self._stealth_engine.activate()
+
+            self.stealth_btn.config(
+                text='🛡️ STEALTH ON', bg='#065f46', fg='#34d399'
+            )
+            self.on_status('🛡️ Super Stealth ON — Hidden from scanners!')
+
+    def show_stealth_info(self):
+        """Show info popup explaining Super Stealth mode."""
+        info_text = (
+            "🛡️ SUPER STEALTH MODE\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Click the '🛡️ Super Stealth' button to activate\n"
+            "Secure Browser (SEB) bypass mode.\n\n"
+            "WHAT IT DOES:\n"
+            "• Forces window to stay ON TOP of SEB fullscreen\n"
+            "• Uses low-level OS hotkeys that SEB can't block\n"
+            "• Hides window from Alt+Tab and taskbar\n"
+            "• Window never steals focus from exam browser\n"
+            "• Invisible to screen capture and recording\n\n"
+            "HOW TO USE:\n"
+            "1. Open ShadowMind FIRST\n"
+            "2. Click '🛡️ Super Stealth' to activate\n"
+            "3. Then open the SEB/exam browser\n"
+            "4. Use hotkeys normally (Alt+S, Alt+T, etc.)\n\n"
+            "⚠️ SAFE: Closing ShadowMind removes ALL hooks.\n"
+            "Nothing is permanently changed on your system.\n\n"
+            "HOTKEYS (work even with SEB open):\n"
+            "  Alt+S  → Screenshot & solve\n"
+            "  Alt+T  → Grab selected text\n"
+            "  Alt+A  → Show/Hide window\n"
+            "  Alt+B  → Ultra transparent mode\n"
+            "  Alt+X  → Panic exit (kills everything)\n"
+            "  Alt+↑↓ → Scroll answer\n"
+            "  Ctrl+↑↓←→ → Move window"
+        )
+        messagebox.showinfo("ShadowMind — Super Stealth Info", info_text)
 
     # ─── Window Controls ──────────────────────────────────────────────────────
 
     def toggle_visibility(self):
         if self.root.state() == 'withdrawn':
+            # SHOW the window
             self.root.deiconify()
+            if self._stealth_engine:
+                self._stealth_engine.hidden = False
         else:
+            # HIDE the window
             self.root.withdraw()
+            if self._stealth_engine:
+                self._stealth_engine.hidden = True
 
     def quit(self, event=None):
         import os
+        # Clean up stealth engine before quitting
+        try:
+            if self._stealth_engine:
+                self._stealth_engine.deactivate()
+        except Exception:
+            pass
         try:
             self.root.destroy()
         except Exception:
@@ -613,6 +842,11 @@ class GhostAssistant:
 
     def run(self):
         try:
+            # Auto-activate Super Stealth if launched with --stealth flag
+            # (happens when desktop monitor respawns us on SEB's desktop)
+            import sys
+            if '--stealth' in sys.argv:
+                self.root.after(1000, self.toggle_super_stealth)
             self.root.mainloop()
         except KeyboardInterrupt:
             self.quit()
