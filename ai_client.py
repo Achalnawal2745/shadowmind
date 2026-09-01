@@ -27,6 +27,18 @@ FALLBACK_CHAIN = [
         "supports_vision": True
     },
     {
+        "provider": "nvidia",
+        "model": "meta/llama-3.2-90b-vision-instruct",
+        "name": "Nvidia Llama 3.2 90B Vision",
+        "supports_vision": True
+    },
+    {
+        "provider": "nvidia",
+        "model": "meta/llama-3.2-11b-vision-instruct",
+        "name": "Nvidia Llama 3.2 11B Vision",
+        "supports_vision": True
+    },
+    {
         "provider": "groq",
         "model": "llama-3.2-90b-vision-preview",
         "name": "Groq Llama 3.2 90B Vision",
@@ -105,7 +117,7 @@ def stream_openai_compatible(api_key: str, base_url: str, model_id: str, message
 
 class GeminiClient:
     """Client wrapper that manages history and dynamically cascades down a multi-key fallback chain."""
-    def __init__(self, gemini_key=None, groq_key: str = "", openrouter_key: str = ""):
+    def __init__(self, gemini_key=None, groq_key: str = "", openrouter_key: str = "", nvidia_key: str = ""):
         if isinstance(gemini_key, list):
             self.gemini_keys = [k.strip() for k in gemini_key if isinstance(k, str) and k.strip()]
         elif isinstance(gemini_key, str) and gemini_key.strip():
@@ -115,6 +127,7 @@ class GeminiClient:
             
         self.groq_key = groq_key
         self.openrouter_key = openrouter_key
+        self.nvidia_key = nvidia_key
         self.history = []  # List of {"role": "user"/"assistant", "content": str or list}
 
     def clear_history(self):
@@ -169,6 +182,8 @@ class GeminiClient:
                 cand_copy["key"] = self.groq_key
             elif candidate["provider"] == "openrouter":
                 cand_copy["key"] = self.openrouter_key
+            elif candidate["provider"] == "nvidia":
+                cand_copy["key"] = self.nvidia_key
             effective_chain.append(cand_copy)
 
         last_error = None
@@ -228,8 +243,13 @@ class GeminiClient:
                             full_answer.append(chunk.text)
                             yield chunk.text
                             
-                elif provider in ("groq", "openrouter"):
-                    base_url = "https://api.groq.com/openai/v1" if provider == "groq" else "https://openrouter.ai/api/v1"
+                elif provider in ("groq", "openrouter", "nvidia"):
+                    if provider == "groq":
+                        base_url = "https://api.groq.com/openai/v1"
+                    elif provider == "openrouter":
+                        base_url = "https://openrouter.ai/api/v1"
+                    elif provider == "nvidia":
+                        base_url = "https://integrate.api.nvidia.com/v1"
                     
                     # Convert agnostic history to OpenAI message objects
                     openai_messages = []

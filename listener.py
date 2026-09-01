@@ -107,14 +107,9 @@ class VoiceListener:
         with self._lock:
             if self.recording:
                 self.recording = False
-                # Close mic stream immediately
-                if self._mic_stream:
-                    try:
-                        self._mic_stream.stop_stream()
-                        self._mic_stream.close()
-                    except Exception:
-                        pass
-                    self._mic_stream = None
+                # Do NOT close the mic stream here. It causes a C-level segfault
+                # if the recording thread is currently blocking on stream.read().
+                # The recording thread will clean up its own stream.
 
         # Transcribe in background thread (no timer delay)
         threading.Thread(target=self._process_and_transcribe, daemon=True).start()
@@ -139,6 +134,15 @@ class VoiceListener:
                     break
         except Exception as e:
             self.on_status(f"❌ Mic Error: {e}")
+        finally:
+            # Cleanly close the stream from the thread that opened it
+            if self._mic_stream:
+                try:
+                    self._mic_stream.stop_stream()
+                    self._mic_stream.close()
+                except Exception:
+                    pass
+                self._mic_stream = None
 
     # ─── Speaker Loopback ─────────────────────────────────────────────────────
 
