@@ -10,3 +10,4 @@ soundcard
 pyinstaller
 dxcam
 opencv-python
+sounddevice
