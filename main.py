@@ -14,6 +14,7 @@ from listener import VoiceListener
 from ai_client import GeminiClient
 from config import load_config, save_config
 from stealth import StealthEngine
+from live_session import LiveSession
 
 
 class GhostAssistant:
@@ -94,18 +95,37 @@ class GhostAssistant:
         )
         self.stealth_btn.pack(side='right', padx=(0, 4), pady=4)
 
+        # ── 🔓 Growtch Mode toggle button ──
+        self.growtch_btn = tk.Button(
+            hdr, text='🔓 Growtch', bg='#1f2937', fg='#9ca3af',
+            font=('Segoe UI', 8, 'bold'), relief='flat', bd=0, cursor='hand2',
+            activebackground='#374151', activeforeground='#f59e0b',
+            command=self.toggle_growtch_mode
+        )
+        self.growtch_btn.pack(side='right', padx=(0, 4), pady=4)
+
+        # ── 🎧 Live Mode toggle button ──
+        self.live_btn = tk.Button(
+            hdr, text='🎧 Live', bg='#1f2937', fg='#9ca3af',
+            font=('Segoe UI', 8, 'bold'), relief='flat', bd=0, cursor='hand2',
+            activebackground='#374151', activeforeground='#22d3ee',
+            command=self.toggle_live_mode
+        )
+        self.live_btn.pack(side='right', padx=(0, 4), pady=4)
+
         self.status_lbl = tk.Label(hdr, text='ShadowMind Active │ Alt+X: Panic',
                                    bg='#1a1a2e', fg='#6b7280', font=('Segoe UI', 8))
         self.status_lbl.pack(side='right', padx=10)
 
         # ── Question strip ──
-        qf = tk.Frame(self.main_container, bg='#111827', height=28)
+        qf = tk.Frame(self.main_container, bg='#111827')
         qf.pack(fill='x', padx=0)
-        qf.pack_propagate(False)
-        tk.Label(qf, text='Q:', bg='#111827', fg='#6b7280',
-                 font=('Segoe UI', 8, 'bold')).pack(side='left', padx=(10, 4), pady=4)
+        
+        lbl_q = tk.Label(qf, text='Q:', bg='#111827', fg='#6b7280', font=('Segoe UI', 8, 'bold'))
+        lbl_q.pack(side='left', padx=(10, 4), pady=4, anchor='nw')
+        
         self.q_lbl = tk.Label(qf, text='—', bg='#111827', fg='#9ca3af',
-                              font=('Segoe UI', 8), anchor='w')
+                              font=('Segoe UI', 8), anchor='w', justify='left', wraplength=350)
         self.q_lbl.pack(side='left', pady=4, fill='x', expand=True)
 
         self.copy_btn = tk.Button(qf, text="📋 Copy", bg='#1f2937', fg='#9ca3af', bd=0, font=('Segoe UI', 7), cursor='hand2', command=self.copy_all)
@@ -238,7 +258,10 @@ class GhostAssistant:
 
         self.listener = VoiceListener(
             on_question=self.on_question,
-            on_status=self.on_status
+            on_status=self.on_status,
+            on_audio=self.on_audio,
+            on_f9_press=self._handle_f9_press,
+            on_f9_release=self._handle_f9_release
         )
 
         t = threading.Thread(target=self.listener.start, daemon=True)
@@ -246,7 +269,11 @@ class GhostAssistant:
 
         self.ghost_mode = False
         self._super_stealth_active = False
+        self._growtch_mode_active = False
+        self._growtch_hidden = False  # Tracks opacity-based hide in Growtch mode
         self._stealth_engine = None
+        self._live_session = None
+        self._live_mode_active = False
         self._keyboard_hotkey_handles = []  # Track handles for unhooking
 
         # global hotkeys (non-blocking) — used in normal mode
@@ -345,6 +372,21 @@ class GhostAssistant:
 
     def on_status(self, text):
         self.message_queue.put(('status', text))
+        
+    def on_audio(self, audio_bytes, fallback_stt):
+        self.message_queue.put(('ask_audio', (audio_bytes, fallback_stt)))
+
+    def _handle_f9_press(self):
+        if getattr(self, '_live_mode_active', False) and self._live_session:
+            self._live_session.start_talking()
+            return True
+        return False
+
+    def _handle_f9_release(self):
+        if getattr(self, '_live_mode_active', False) and self._live_session:
+            self._live_session.stop_talking()
+            return True
+        return False
 
     # ─── Queue processor (main thread) ───────────────────────────────────────
 
@@ -355,6 +397,58 @@ class GhostAssistant:
                 if kind == 'question':
                     self._show_question(data)
                     self._start_streaming(data)
+                elif kind == 'ask_audio':
+                    audio_bytes, fallback_stt = data
+                    self._show_question("🎙️ [Audio Query]")
+                    self._start_streaming("", audio_bytes=audio_bytes, fallback_stt=fallback_stt)
+
+                    def _bg_transcribe():
+                        # Try Groq Whisper first (perfect quality)
+                        groq_key = self.config.get('groq_api_key', '')
+                        if groq_key:
+                            try:
+                                import requests
+                                files = {'file': ('audio.wav', audio_bytes, 'audio/wav')}
+                                payload = {'model': 'whisper-large-v3-turbo'}
+                                headers = {'Authorization': f'Bearer {groq_key}'}
+                                r = requests.post('https://api.groq.com/openai/v1/audio/transcriptions', 
+                                                  headers=headers, files=files, data=payload, timeout=5)
+                                if r.status_code == 200:
+                                    text = r.json().get('text', '').strip()
+                                    if text:
+                                        self.root.after(0, lambda: self.q_lbl.config(text=f"🎙️ {text}"))
+                                        return
+                            except Exception:
+                                pass
+
+                        # Fallback to local Google STT
+                        try:
+                            import speech_recognition as sr
+                            import io
+                            buf = io.BytesIO(audio_bytes)
+                            recognizer = sr.Recognizer()
+                            with sr.AudioFile(buf) as source:
+                                audio_data = recognizer.record(source)
+                            text = recognizer.recognize_google(audio_data)
+                            if text.strip():
+                                clean = text.replace('\n', ' ').strip()
+                                self.root.after(0, lambda: self.q_lbl.config(text=f"🎙️ {clean}"))
+                        except Exception:
+                            pass
+
+                    import threading
+                    threading.Thread(target=_bg_transcribe, daemon=True).start()
+                elif kind == 'live_chunk':
+                    # Incoming text from Gemini Live WebSocket
+                    self._answer_buffer.append(data)
+                    self._render_markdown(''.join(self._answer_buffer))
+                    self.root.update_idletasks()
+                    self.root.after(25, self.process_queue)
+                    return
+                elif kind == 'live_turn_done':
+                    self._save_history()
+                    self._answer_buffer = []
+                    self._show_question("🎧 [Live — Listening...]")
                 elif kind == 'chunk':
                     # Re-render with live markdown on every chunk (ChatGPT style)
                     self._answer_buffer.append(data)
@@ -368,8 +462,12 @@ class GhostAssistant:
                     self.status_lbl.config(text='F9/Alt+T/Alt+S active │ Alt+X: Panic')
                     self._save_history()
                 elif kind == 'grab_screenshot':
-                    self.on_status('📸 Capturing screen...')
-                    self._take_screenshot_and_send()
+                    if self._growtch_mode_active:
+                        self.on_status('🔓 Growtch capture...')
+                        self._take_growtch_screenshot()
+                    else:
+                        self.on_status('📸 Capturing screen...')
+                        self._take_screenshot_and_send()
                 elif kind == 'grab_clipboard':
                     now = time.time()
                     if hasattr(self, '_last_req_time') and now - self._last_req_time < 1.0:
@@ -623,7 +721,7 @@ class GhostAssistant:
         current_y = self.root.winfo_y()
         self.root.geometry(f'{w}x{h}+{current_x}+{current_y}')
 
-    def _start_streaming(self, question, image_bytes=None):
+    def _start_streaming(self, question, image_bytes=None, audio_bytes=None, fallback_stt=None):
         self.current_stream_id += 1
         my_stream_id = self.current_stream_id
 
@@ -632,7 +730,7 @@ class GhostAssistant:
             retries = 2
             for attempt in range(retries + 1):
                 try:
-                    for chunk in self.gemini.stream(question, image_bytes=image_bytes):
+                    for chunk in self.gemini.stream(question, image_bytes=image_bytes, audio_bytes=audio_bytes):
                         if self.current_stream_id != my_stream_id:
                             return # Cancelled by a newer request!
                         self.message_queue.put(('chunk', chunk))
@@ -647,6 +745,14 @@ class GhostAssistant:
                         self.message_queue.put(('chunk', f"\n[Rate limit hit, retrying in 2s... attempt {attempt+1}]"))
                         time.sleep(2)
                         continue
+                        
+                    # If this was an audio request, trigger the STT fallback!
+                    if audio_bytes and fallback_stt:
+                        if self.current_stream_id == my_stream_id:
+                            self.message_queue.put(('status', f'⚠️ Audio API failed: {str(e)[:30]}. Falling back to STT...'))
+                            fallback_stt()
+                        return
+
                     self.message_queue.put(('chunk', f'\n[Error: {e}]'))
                     break
             
@@ -656,35 +762,82 @@ class GhostAssistant:
 
     def _take_screenshot_and_send(self):
         try:
-            from PIL import Image
+            from PIL import Image, ImageGrab
             import io
+            import threading
+            import numpy as np
+
             img_bytes = None
 
-            # Method 1: Standard mss capture (works on most apps)
-            print("[Screenshot] Trying mss capture...")
-            try:
-                with mss.MSS() as sct:
-                    monitor = sct.monitors[1]
-                    sct_img = sct.grab(monitor)
-                    img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                    
+            # Method 1: DXGI (GPU-level capture, bypasses most software blocks)
+            # Run in a separate thread to avoid COM STA/MTA conflicts with Tkinter
+            print("[Screenshot] Trying DXGI capture...")
+            dxgi_result = []
+            def _dxgi_worker():
+                try:
+                    import dxcam
+                    import cv2
+                    camera = dxcam.create(output_color="BGR")
+                    frame = camera.grab()
+                    if frame is not None:
+                        # Check if it's not a pure black screen
+                        if np.max(frame) > 10:
+                            _, encoded = cv2.imencode('.png', frame)
+                            dxgi_result.append(encoded.tobytes())
+                except Exception as e:
+                    print(f"[Screenshot] DXGI thread exception: {e}")
+
+            t = threading.Thread(target=_dxgi_worker)
+            t.start()
+            t.join(timeout=2.0)
+
+            if dxgi_result:
+                img_bytes = dxgi_result[0]
+                print(f"[Screenshot] ✅ DXGI success: {len(img_bytes)} bytes")
+            else:
+                print("[Screenshot] DXGI skipped or returned black")
+
+            # Method 2: PIL ImageGrab (Standard Windows API)
+            if not img_bytes:
+                print("[Screenshot] Trying PIL capture...")
+                try:
+                    img = ImageGrab.grab(all_screens=True)
                     extrema = img.convert('L').getextrema()
-                    print(f"[Screenshot] mss extrema: {extrema}")
+                    print(f"[Screenshot] PIL extrema: {extrema}")
                     if extrema[1] > 10:
                         buf = io.BytesIO()
                         img.save(buf, format="PNG")
                         img_bytes = buf.getvalue()
-                        print(f"[Screenshot] mss success: {len(img_bytes)} bytes")
-            except Exception as e:
-                print(f"[Screenshot] mss failed: {e}")
+                        print(f"[Screenshot] ✅ PIL success: {len(img_bytes)} bytes")
+                except Exception as e:
+                    print(f"[Screenshot] PIL failed: {e}")
 
-            # Method 2: Stealth BitBlt/PrintWindow (bypasses some screen protection)
+            # Method 3: Standard mss capture (works on most apps)
             if not img_bytes:
-                print("[Screenshot] mss was black, trying stealth capture...")
+                print("[Screenshot] Trying mss capture...")
+                try:
+                    with mss.MSS() as sct:
+                        monitor = sct.monitors[1]
+                        sct_img = sct.grab(monitor)
+                        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                        
+                        extrema = img.convert('L').getextrema()
+                        print(f"[Screenshot] mss extrema: {extrema}")
+                        if extrema[1] > 10:
+                            buf = io.BytesIO()
+                            img.save(buf, format="PNG")
+                            img_bytes = buf.getvalue()
+                            print(f"[Screenshot] ✅ mss success: {len(img_bytes)} bytes")
+                except Exception as e:
+                    print(f"[Screenshot] mss failed: {e}")
+
+            # Method 4: Stealth BitBlt/PrintWindow (bypasses some screen protection)
+            if not img_bytes:
+                print("[Screenshot] ALL standard methods were black, trying stealth capture...")
                 stealth_bytes = StealthEngine.stealth_screenshot()
                 if stealth_bytes:
                     img_bytes = stealth_bytes
-                    print(f"[Screenshot] Stealth success: {len(img_bytes)} bytes")
+                    print(f"[Screenshot] ✅ Stealth success: {len(img_bytes)} bytes")
                 else:
                     print("[Screenshot] Stealth also failed/black")
 
@@ -813,19 +966,316 @@ class GhostAssistant:
         )
         messagebox.showinfo("ShadowMind — Super Stealth Info", info_text)
 
+    # ─── Live Mode ────────────────────────────────────────────────────────────
+
+    def toggle_live_mode(self):
+        """Toggle Gemini Live WebSocket mode — persistent audio streaming."""
+        self._live_mode_active = not self._live_mode_active
+
+        if self._live_mode_active:
+            self.live_btn.config(text='🎧 LIVE ON', bg='#0f766e', fg='#22d3ee')
+            self.on_status('🔌 Starting Live session...')
+
+            # Gather Gemini API keys
+            gemini_keys = []
+            api_key = self.config.get('api_key', '')
+            if api_key:
+                gemini_keys.append(api_key)
+            for i in range(2, 20):
+                k = self.config.get(f'gemini_api_key_{i}', '')
+                if k:
+                    gemini_keys.append(k)
+
+            self._live_session = LiveSession(
+                api_keys=gemini_keys,
+                on_text=self._on_live_text,
+                on_status=self.on_status,
+            )
+
+            # Clear answer area and show listening state
+            self._answer_buffer = []
+            self._show_question("🎧 [Live — Connecting...]")
+            self._live_session.start()
+        else:
+            self.live_btn.config(text='🎧 Live', bg='#1f2937', fg='#9ca3af')
+            if self._live_session:
+                self._live_session.stop()
+                self._live_session = None
+            self.on_status('🎧 Live Mode OFF')
+
+    def _on_live_text(self, text_chunk):
+        """Callback from LiveSession — routes text to the UI via the message queue."""
+        if text_chunk == "\n\n":
+            # Turn complete signal
+            self.message_queue.put(('live_turn_done', None))
+        else:
+            self.message_queue.put(('live_chunk', text_chunk))
+
+    # ─── Growtch Mode ─────────────────────────────────────────────────────────
+
+    def toggle_growtch_mode(self):
+        """Toggle Growtch Mode — bypasses GrowthArc/exam browser capture protection."""
+        self._growtch_mode_active = not self._growtch_mode_active
+        if self._growtch_mode_active:
+            self.growtch_btn.config(text='🔓 GROWTCH ON', bg='#78350f', fg='#fbbf24')
+            self.on_status('🔓 Growtch Mode ON — Exam bypass active')
+        else:
+            # Restore window if it was hidden via region
+            if self._growtch_hidden:
+                self._growtch_hidden = False
+                if self._stealth_engine:
+                    self._stealth_engine.hidden = False
+                    try:
+                        # 0 clears the region, restoring full window
+                        ctypes.windll.user32.SetWindowRgn(self._stealth_engine.hwnd, 0, True)
+                    except Exception:
+                        pass
+            self.growtch_btn.config(text='🔓 Growtch', bg='#1f2937', fg='#9ca3af')
+            self.on_status('🔓 Growtch Mode OFF')
+
+    def _take_growtch_screenshot(self):
+        """
+        Growtch Mode screenshot — bypasses WDA_EXCLUDEFROMCAPTURE.
+        
+        7-step capture chain:
+        1. Strip WDA flag from exam windows
+        2. PrintWindow(PW_RENDERFULLCONTENT) on the exam window
+        3. Child window capture (render widget may not have WDA)
+        4. Window DC BitBlt (reads from window's own DC)
+        5. DXGI fallback
+        6. mss fallback
+        7. UI Automation text extraction (no pixels — reads accessibility tree)
+        """
+        try:
+            import io
+            from PIL import Image, ImageGrab
+
+            img_bytes = None
+
+            # Step 1: Try to strip capture protection from exam windows
+            print("[Growtch] Step 1: Stripping capture protection...")
+            stripped = StealthEngine.strip_capture_protection()
+            print(f"[Growtch] Stripped {stripped} window(s)")
+
+            # Step 2: PrintWindow on the exam window (bypasses DWM compositor)
+            print("[Growtch] Step 2: PrintWindow capture...")
+            img_bytes = StealthEngine.capture_exam_window_printwindow()
+
+            # Step 3: Child window capture (render widget may not inherit WDA)
+            if not img_bytes:
+                print("[Growtch] Step 3: Child window capture...")
+                img_bytes = StealthEngine.capture_child_windows()
+
+            # Step 4: Window DC BitBlt (reads from window's own device context)
+            if not img_bytes:
+                print("[Growtch] Step 4: Window DC BitBlt...")
+                img_bytes = StealthEngine.capture_window_dc_bitblt()
+
+            # Step 5: BitBlt full-screen (works if step 1 stripped WDA)
+            if not img_bytes and stripped > 0:
+                print("[Growtch] Step 5: BitBlt after WDA strip...")
+                img_bytes = StealthEngine.capture_exam_fullscreen_bitblt()
+
+            # Step 6: DXGI fallback
+            if not img_bytes:
+                print("[Growtch] Step 6: Trying DXGI fallback...")
+                import threading
+                import numpy as np
+                dxgi_result = []
+                def _dxgi_worker():
+                    try:
+                        import dxcam
+                        import cv2
+                        camera = dxcam.create(output_color="BGR")
+                        frame = camera.grab()
+                        if frame is not None and np.max(frame) > 10:
+                            _, encoded = cv2.imencode('.png', frame)
+                            dxgi_result.append(encoded.tobytes())
+                    except Exception as e:
+                        print(f"[Growtch] DXGI exception: {e}")
+                t = threading.Thread(target=_dxgi_worker)
+                t.start()
+                t.join(timeout=2.0)
+                if dxgi_result:
+                    img_bytes = dxgi_result[0]
+                    print(f"[Growtch] ✅ DXGI fallback: {len(img_bytes)} bytes")
+
+            # Step 7: mss fallback
+            if not img_bytes:
+                print("[Growtch] Step 7: mss fallback...")
+                try:
+                    with mss.MSS() as sct:
+                        monitor = sct.monitors[1]
+                        sct_img = sct.grab(monitor)
+                        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                        extrema = img.convert('L').getextrema()
+                        if extrema[1] > 10:
+                            buf = io.BytesIO()
+                            img.save(buf, format="PNG")
+                            img_bytes = buf.getvalue()
+                            print(f"[Growtch] ✅ mss fallback: {len(img_bytes)} bytes")
+                except Exception as e:
+                    print(f"[Growtch] mss failed: {e}")
+
+            # If we got image bytes, send them normally
+            if img_bytes:
+                screenshot_path = os.path.join(self.base_dir, "last_screenshot_seen_by_ai.png")
+                with open(screenshot_path, "wb") as f:
+                    f.write(img_bytes)
+
+                self._show_question("🔓 Growtch capture! Sending to AI...")
+
+                user_instruction = self.manual_entry.get().strip()
+                if user_instruction and user_instruction != "Type question here & press Enter...":
+                    prompt = (
+                        f"USER SPECIFIC INSTRUCTION: {user_instruction}\n\n"
+                        "Please analyze the attached screen capture strictly following the user instruction above. "
+                        "If it involves solving a problem, provide the direct answer/code first."
+                    )
+                    self.manual_entry.delete(0, 'end')
+                else:
+                    prompt = (
+                        "Analyze this screen capture. "
+                        "If it contains a coding problem, interview question, or technical task, "
+                        "solve it immediately. Provide the direct answer or code first, followed by a very brief, concise explanation. "
+                        "If it is just a diagram or generic image, explain what it is briefly."
+                    )
+
+                self._start_streaming(prompt, image_bytes=img_bytes)
+                return
+
+            # ═══ ULTIMATE FALLBACK: UI Automation text extraction ═══
+            # All pixel capture methods failed. Extract text from the
+            # accessibility tree and send it to AI as text (no image).
+            print("[Growtch] Step 8: UI Automation text extraction (no-pixel bypass)...")
+            exam_text = StealthEngine.extract_exam_text_uiautomation()
+
+            if exam_text and len(exam_text.strip()) > 20:
+                self._show_question("🔓 Growtch text extraction! Sending to AI...")
+
+                user_instruction = self.manual_entry.get().strip()
+                if user_instruction and user_instruction != "Type question here & press Enter...":
+                    prompt = (
+                        f"USER SPECIFIC INSTRUCTION: {user_instruction}\n\n"
+                        f"EXAM CONTENT (extracted from screen):\n{exam_text}\n\n"
+                        "Solve the above problem. Provide the direct answer/code first."
+                    )
+                    self.manual_entry.delete(0, 'end')
+                else:
+                    prompt = (
+                        f"EXAM CONTENT (extracted from screen):\n{exam_text}\n\n"
+                        "If this contains a coding problem, interview question, or technical task, "
+                        "solve it immediately. Provide the direct answer or code first, followed by a very brief, concise explanation."
+                    )
+
+                self._start_streaming(prompt)
+                return
+
+            # Everything failed
+            self.on_status("⚠️ Growtch: All capture methods failed")
+            print("[Growtch] ALL methods failed (pixel + text)")
+
+        except Exception as e:
+            print(f"[Growtch] Exception: {e}")
+            self.on_status(f"⚠️ Growtch failed: {e}")
+
+
     # ─── Window Controls ──────────────────────────────────────────────────────
 
     def toggle_visibility(self):
-        if self.root.state() == 'withdrawn':
-            # SHOW the window
-            self.root.deiconify()
-            if self._stealth_engine:
-                self._stealth_engine.hidden = False
-        else:
-            # HIDE the window
-            self.root.withdraw()
-            if self._stealth_engine:
-                self._stealth_engine.hidden = True
+        def _do_toggle():
+            # ── GROWTCH MODE: Z-Order Hijacking (Invisible to Anti-Cheat) ──
+            if self._growtch_mode_active:
+                if self._growtch_hidden:
+                    # SHOW
+                    self._growtch_hidden = False
+                    if self._stealth_engine:
+                        self._stealth_engine.hidden = False
+                        try:
+                            hwnd = self._stealth_engine.hwnd
+                            user32 = ctypes.windll.user32
+                            
+                            # 1. Clear the hidden region
+                            user32.SetWindowRgn(hwnd, 0, True)
+                            
+                            # 2. Find the exam window
+                            from stealth import StealthEngine
+                            exams = StealthEngine.find_exam_windows()
+                            if exams:
+                                exam_hwnd = exams[0][0]
+                                print(f"[Growtch] Hijacking Z-order: Setting exam {exam_hwnd} as Owner")
+                                
+                                # Setup SetWindowLongPtr for 64-bit safety
+                                import sys
+                                if sys.maxsize > 2**32:
+                                    SetWindowLong = user32.SetWindowLongPtrW
+                                    SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+                                else:
+                                    SetWindowLong = user32.SetWindowLongW
+                                    SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+                                
+                                # GWLP_HWNDPARENT = -8. This makes GrowthArc the "Owner" of ShadowMind.
+                                # Windows OS guarantees that an Owned window ALWAYS floats above its Owner.
+                                # If GrowthArc forces itself to TOPMOST, Windows brings ShadowMind with it!
+                                SetWindowLong(hwnd, -8, exam_hwnd)
+                            
+                            # 3. Force topmost as a backup
+                            user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0013)
+                        except Exception as e:
+                            print(f"[Growtch] Show error: {e}")
+                        
+                    def _re_topmost():
+                        try:
+                            if self._stealth_engine:
+                                ctypes.windll.user32.SetWindowPos(self._stealth_engine.hwnd, -1, 0, 0, 0, 0, 0x0013)
+                        except Exception:
+                            pass
+                    self.root.after(50, _re_topmost)
+                    self.root.after(200, _re_topmost)
+                else:
+                    # HIDE
+                    self._growtch_hidden = True
+                    if self._stealth_engine:
+                        self._stealth_engine.hidden = True
+                        try:
+                            hwnd = self._stealth_engine.hwnd
+                            user32 = ctypes.windll.user32
+                            gdi32 = ctypes.windll.gdi32
+                            
+                            # 1. Detach from exam window owner (set owner to 0 / Desktop)
+                            import sys
+                            if sys.maxsize > 2**32:
+                                SetWindowLong = user32.SetWindowLongPtrW
+                                SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+                            else:
+                                SetWindowLong = user32.SetWindowLongW
+                                SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+                            SetWindowLong(hwnd, -8, 0)
+                            
+                            # 2. Set empty region to make it invisible and unclickable
+                            hRgn = gdi32.CreateRectRgn(0, 0, 0, 0)
+                            user32.SetWindowRgn(hwnd, hRgn, True)
+                            
+                            # 3. Drop topmost status so it stays hidden
+                            HWND_NOTOPMOST = -2
+                            user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, 0x0013)
+                        except Exception as e:
+                            print(f"[Growtch] Hide error: {e}")
+                return
+
+            # ── NORMAL MODE: Standard withdraw/deiconify ──
+            if self.root.state() == 'withdrawn':
+                self.root.deiconify()
+                self.root.attributes('-topmost', True)
+                self.root.lift()
+                if self._stealth_engine:
+                    self._stealth_engine.hidden = False
+            else:
+                self.root.withdraw()
+                if self._stealth_engine:
+                    self._stealth_engine.hidden = True
+        # Thread-safe: schedule on main thread
+        self.root.after(0, _do_toggle)
 
     def quit(self, event=None):
         import os

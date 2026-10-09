@@ -37,9 +37,12 @@ class VoiceListener:
     Release F9 → mixes, transcribes, fires on_question callback
     """
 
-    def __init__(self, on_question, on_status=None):
+    def __init__(self, on_question, on_status=None, on_audio=None, on_f9_press=None, on_f9_release=None):
         self.on_question = on_question
         self.on_status   = on_status or (lambda s: None)
+        self.on_audio    = on_audio
+        self.on_f9_press = on_f9_press
+        self.on_f9_release = on_f9_release
         self.recording   = False
         self._lock       = threading.Lock()
 
@@ -84,6 +87,9 @@ class VoiceListener:
     # ─── Key Events ───────────────────────────────────────────────────────────
 
     def _on_press(self, _):
+        if self.on_f9_press and self.on_f9_press():
+            return  # Handled externally
+            
         with self._lock:
             if not self.recording:
                 # Check if audio device changed (e.g. plugged in headphones)
@@ -104,6 +110,9 @@ class VoiceListener:
                     threading.Thread(target=self._record_speaker, daemon=True).start()
 
     def _on_release(self, _):
+        if self.on_f9_release and self.on_f9_release():
+            return  # Handled externally
+            
         with self._lock:
             if self.recording:
                 self.recording = False
@@ -118,20 +127,12 @@ class VoiceListener:
 
     def _record_mic(self):
         try:
-            import pyaudio
-            self._mic_stream = self._pa.open(
-                format=self._FORMAT,
-                channels=CHANNELS,
-                rate=SAMPLE_RATE,
-                input=True,
-                frames_per_buffer=CHUNK_SIZE
-            )
-            while self.recording:
-                try:
-                    data = self._mic_stream.read(CHUNK_SIZE, exception_on_overflow=False)
-                    self._mic_frames.append(data)
-                except Exception:
-                    break
+            mic = sc.default_microphone()
+            with mic.recorder(samplerate=SAMPLE_RATE, channels=CHANNELS) as recorder:
+                while self.recording:
+                    chunk = recorder.record(numframes=CHUNK_SIZE)
+                    pcm = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                    self._mic_frames.append(pcm)
         except Exception as e:
             self.on_status(f"❌ Mic Error: {e}")
         finally:
@@ -159,20 +160,24 @@ class VoiceListener:
     # ─── Mix + Transcribe ─────────────────────────────────────────────────────
 
     def _process_and_transcribe(self):
-        if not self._mic_frames:
+        if not self._mic_frames and not self._speaker_frames:
             self.on_status('❓ Nothing recorded — try again (Hold F9)')
             return
 
-        self.on_status('⏳ Transcribing…')
+        self.on_status('⏳ Processing audio…')
         try:
-            mic_np = np.frombuffer(b''.join(self._mic_frames), dtype=np.int16).astype(np.float32)
+            mic_np = np.frombuffer(b''.join(self._mic_frames), dtype=np.int16).astype(np.float32) if self._mic_frames else np.array([], dtype=np.float32)
+            spk_np = np.frombuffer(b''.join(self._speaker_frames), dtype=np.int16).astype(np.float32) if self._speaker_frames else np.array([], dtype=np.float32)
 
-            if self._speaker_frames:
-                spk_np  = np.frombuffer(b''.join(self._speaker_frames), dtype=np.int16).astype(np.float32)
+            if len(mic_np) > 0 and len(spk_np) > 0:
                 min_len = min(len(mic_np), len(spk_np))
                 mixed   = ((mic_np[:min_len] * 0.6) + (spk_np[:min_len] * 0.8)) / 2.0
-            else:
+            elif len(mic_np) > 0:
                 mixed = mic_np
+            elif len(spk_np) > 0:
+                mixed = spk_np
+            else:
+                mixed = np.zeros(16000, dtype=np.float32)
 
             mixed_int16 = np.clip(mixed, -32767, 32767).astype(np.int16)
 
@@ -184,16 +189,31 @@ class VoiceListener:
             wf.writeframes(mixed_int16.tobytes())
             wf.close()
             buf.seek(0)
+            
+            audio_bytes = buf.read()
+            buf.seek(0)
+            
+            def fallback_stt():
+                self.on_status('⏳ Native audio failed. Falling back to STT…')
+                try:
+                    recognizer = sr.Recognizer()
+                    with sr.AudioFile(buf) as source:
+                        audio_data = recognizer.record(source)
+                    text = recognizer.recognize_google(audio_data)
+                    if text.strip():
+                        self.on_status('✅ Got it! Sending to AI…')
+                        self.on_question(text.strip())
+                    else:
+                        self.on_status('❓ Could not understand — try again')
+                except Exception as e:
+                    self.on_status(f'❌ STT fallback error: {e}')
 
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(buf) as source:
-                audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data)
-            if text.strip():
-                self.on_status('✅ Got it! Sending to AI…')
-                self.on_question(text.strip())
+            if self.on_audio:
+                self.on_status('✅ Sending native audio directly to AI…')
+                self.on_audio(audio_bytes, fallback_stt)
             else:
-                self.on_status('❓ Could not understand — try again')
+                # If no on_audio callback, just use STT
+                fallback_stt()
 
         except sr.UnknownValueError:
             self.on_status('❓ Could not understand — try again (Hold F9)')

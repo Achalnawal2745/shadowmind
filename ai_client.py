@@ -133,16 +133,19 @@ class GeminiClient:
     def clear_history(self):
         self.history = []
 
-    def stream(self, question: str, image_bytes: bytes = None):
+    def stream(self, question: str = "", image_bytes: bytes = None, audio_bytes: bytes = None):
         """Yields text chunks as AI generates the answer, falling back to backups if any step fails."""
         # 1. Format user message for history
+        user_content = []
+        if question:
+            user_content.append({"type": "text", "text": question})
         if image_bytes:
-            user_content = [
-                {"type": "text", "text": question},
-                {"type": "image", "image_bytes": image_bytes}
-            ]
-        else:
-            user_content = question
+            user_content.append({"type": "image", "image_bytes": image_bytes})
+        if audio_bytes:
+            user_content.append({"type": "audio", "audio_bytes": audio_bytes})
+            
+        if not user_content:
+            return
 
         # Add to history
         self.history.append({"role": "user", "content": user_content})
@@ -151,15 +154,17 @@ class GeminiClient:
         if len(self.history) > MAX_HISTORY * 2:
             self.history = self.history[-(MAX_HISTORY * 2):]
             
-        # Check if the conversation contains any images
+        # Check if the conversation contains any images or audio
         has_images = False
+        has_audio = False
         for msg in self.history:
             if isinstance(msg["content"], list):
                 for item in msg["content"]:
                     if item.get("type") == "image":
                         has_images = True
-                        break
-            if has_images:
+                    elif item.get("type") == "audio":
+                        has_audio = True
+            if has_images and has_audio:
                 break
 
         # Build dynamic effective fallback chain (including all provided Gemini keys)
@@ -200,6 +205,10 @@ class GeminiClient:
             if has_images and not supports_vision:
                 continue
                 
+            # Skip non-Gemini models if we have audio (only Gemini supports native audio in this chain)
+            if has_audio and provider != "gemini":
+                continue
+                
             if not key or not key.strip():
                 # Skip if key is not configured
                 continue
@@ -230,6 +239,8 @@ class GeminiClient:
                                     parts.append(types.Part.from_text(text=item["text"]))
                                 elif item.get("type") == "image":
                                     parts.append(types.Part.from_bytes(data=item["image_bytes"], mime_type='image/png'))
+                                elif item.get("type") == "audio":
+                                    parts.append(types.Part.from_bytes(data=item["audio_bytes"], mime_type='audio/wav'))
                                     
                         gemini_contents.append(types.Content(role=gemini_role, parts=parts))
                         

@@ -11,3 +11,4 @@ pyinstaller
 dxcam
 opencv-python
 sounddevice
+comtypes
